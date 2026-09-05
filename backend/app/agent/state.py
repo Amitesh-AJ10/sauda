@@ -10,6 +10,7 @@ class DealStatus(StrEnum):
     CHECKING_INVENTORY = "checking_inventory"
     NEGOTIATING = "negotiating"
     AWAITING_PAYMENT = "awaiting_payment"
+    PAID = "paid"
     ISSUING_INVOICE = "issuing_invoice"
     DISPATCHED = "dispatched"
     OUT_OF_STOCK = "out_of_stock"
@@ -43,6 +44,9 @@ class DealState(BaseModel):
 
     unit_price: float | None = None
     available_qty: int | None = None
+
+    payment_link_id: str | None = None
+    payment_link_url: str | None = None
 
     status: DealStatus = DealStatus.EXTRACTING_INTENT
     reply: str | None = None

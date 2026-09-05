@@ -11,6 +11,7 @@ from app.agent.prompts import EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS,
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.services.inventory import InventoryService
 from app.services.llm import LLMClient
+from app.services.razorpay_client import RazorpayClient
 
 
 def extract_intent(state: DealState, llm: LLMClient) -> dict:
@@ -118,11 +119,31 @@ def _safe_negotiation_reply(item_name: str, qty: int, unit_price: float, state: 
     )
 
 
-def await_payment(state: DealState) -> dict:
-    """Stub: real Razorpay payment-link integration lands in Task 05."""
+def await_payment(state: DealState, razorpay: RazorpayClient) -> dict:
+    """Deterministically create a Razorpay payment link for the agreed terms.
+
+    `qty * unit_price` is computed here in Python (never by the LLM) and
+    converted to paise, per PRD guardrail F/G3.
+    """
+    qty = state.qty or 0
+    unit_price = state.unit_price or 0.0
+    amount_paise = round(qty * unit_price * 100)
+
+    link = razorpay.create_payment_link(
+        amount_paise=amount_paise,
+        description=f"{qty} x {state.item_name}",
+        notes={
+            "item_name": state.item_name or "",
+            "hospital_name": state.hospital_name or "",
+            "pin_code": state.pin_code or "",
+        },
+    )
+
     return {
         "status": DealStatus.AWAITING_PAYMENT,
-        "reply": "A Razorpay payment link is being generated and will be sent here shortly.",
+        "payment_link_id": link.id,
+        "payment_link_url": link.short_url,
+        "reply": f"Please complete payment to confirm your order: {link.short_url}",
     }
 
 

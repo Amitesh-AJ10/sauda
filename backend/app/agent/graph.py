@@ -14,6 +14,7 @@ from app.agent import nodes
 from app.agent.state import DealState, DealStatus
 from app.services.inventory import InventoryService, get_inventory_service
 from app.services.llm import LLMClient
+from app.services.razorpay_client import RazorpayClient, get_razorpay_client
 
 
 def _after_check_inventory(state: DealState) -> str:
@@ -27,22 +28,24 @@ def _after_negotiate(state: DealState) -> str:
 def build_graph(
     inventory: InventoryService | None = None,
     llm: LLMClient | None = None,
+    razorpay: RazorpayClient | None = None,
 ):
     """Build (but don't compile-and-cache) the deal graph.
 
     Dependencies are injected so tests can pass fakes; production code can
-    call this with no arguments to get the real inventory service and a
-    fresh Groq-backed LLM client.
+    call this with no arguments to get the real inventory service, a fresh
+    Groq-backed LLM client, and a real Razorpay client.
     """
     inventory = inventory or get_inventory_service()
     llm = llm or LLMClient()
+    razorpay = razorpay or get_razorpay_client()
 
     builder = StateGraph(DealState)
 
     builder.add_node("extract_intent", partial(nodes.extract_intent, llm=llm))
     builder.add_node("check_inventory", partial(nodes.check_inventory, inventory=inventory))
     builder.add_node("negotiate", partial(nodes.negotiate, inventory=inventory, llm=llm))
-    builder.add_node("await_payment", nodes.await_payment)
+    builder.add_node("await_payment", partial(nodes.await_payment, razorpay=razorpay))
     builder.add_node("issue_invoice", nodes.issue_invoice)
     builder.add_node("dispatch", nodes.dispatch)
 

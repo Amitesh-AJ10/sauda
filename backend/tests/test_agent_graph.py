@@ -1,6 +1,7 @@
 from app.agent.graph import build_graph
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.services.inventory import InventoryService
+from app.services.razorpay_client import PaymentLink
 
 
 class FakeLLM:
@@ -17,6 +18,13 @@ class FakeLLM:
         return self._text
 
 
+class FakeRazorpay:
+    """Mocked Razorpay client for full-graph runs — no real API calls."""
+
+    def create_payment_link(self, amount_paise: int, description: str, notes: dict) -> PaymentLink:
+        return PaymentLink(id="plink_fake123", short_url="https://rzp.io/i/fake123", status="created")
+
+
 def make_inventory() -> InventoryService:
     return InventoryService()
 
@@ -31,7 +39,7 @@ def test_happy_path_runs_end_to_end_to_dispatched():
         ),
         text="We can offer 50 boxes at a fair rate. We will dispatch via our logistics partner post-payment.",
     )
-    graph = build_graph(inventory=make_inventory(), llm=llm)
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
 
     result = graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"]))
 
@@ -45,7 +53,7 @@ def test_out_of_stock_short_circuits_with_apology_never_inventing_stock():
         structured=ExtractedIntent(item_name="Skin Stapler", qty=500),
         text="this should never be called",
     )
-    graph = build_graph(inventory=make_inventory(), llm=llm)
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
 
     result = graph.invoke(DealState(messages=["Need 500 surgical staplers to Pune, best rate?"]))
 
@@ -60,7 +68,7 @@ def test_guardrail_violation_caught_before_reaching_buyer():
         structured=ExtractedIntent(item_name="Nitrile Examination Gloves", qty=50),
         text="We guarantee it will be delivered in 10 minutes, no questions asked!",
     )
-    graph = build_graph(inventory=make_inventory(), llm=llm)
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
 
     result = graph.invoke(DealState(messages=["Need 50 gloves urgently, best rate?"]))
 

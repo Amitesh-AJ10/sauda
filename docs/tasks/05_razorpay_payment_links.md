@@ -22,9 +22,9 @@ Once terms are agreed in the negotiation, deterministically generate a real Razo
 
 ## Acceptance Criteria
 
-- [ ] Negotiating a deal produces a real payment link (verified against Razorpay's test-mode API) with the correct amount.
-- [ ] A webhook signature that doesn't match the secret is rejected with `400`.
-- [ ] A valid `payment_link.paid` event transitions the matching deal to `Paid` and is a no-op if replayed (idempotent).
+- [x] Negotiating a deal produces a real payment link (verified against Razorpay's test-mode API) with the correct amount.
+- [x] A webhook signature that doesn't match the secret is rejected with `400`.
+- [x] A valid `payment_link.paid` event transitions the matching deal to `Paid` and is a no-op if replayed (idempotent).
 
 ## Tests
 

@@ -1,6 +1,7 @@
 from app.agent import nodes
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.services.inventory import InventoryService
+from app.services.razorpay_client import PaymentLink
 
 
 class FakeLLM:
@@ -127,10 +128,39 @@ def test_negotiate_guardrail_violation_is_caught_and_replaced():
 # --- stub nodes ---------------------------------------------------------
 
 
-def test_await_payment_stub_transitions_status():
-    state = DealState(status=DealStatus.NEGOTIATING)
-    updates = nodes.await_payment(state)
+class FakeRazorpay:
+    """Mocked Razorpay client — records the call, never hits the network."""
+
+    def __init__(self, link: PaymentLink):
+        self._link = link
+        self.calls: list[tuple[int, str, dict]] = []
+
+    def create_payment_link(self, amount_paise: int, description: str, notes: dict) -> PaymentLink:
+        self.calls.append((amount_paise, description, notes))
+        return self._link
+
+
+def test_await_payment_creates_real_payment_link_with_agreed_amount():
+    link = PaymentLink(id="plink_fake123", short_url="https://rzp.io/i/fake123", status="created")
+    razorpay = FakeRazorpay(link)
+    state = DealState(
+        status=DealStatus.NEGOTIATING,
+        item_name="Nitrile Examination Gloves",
+        qty=50,
+        unit_price=475.50,
+    )
+
+    updates = nodes.await_payment(state, razorpay=razorpay)
+
+    assert razorpay.calls == [(2377500, "50 x Nitrile Examination Gloves", {
+        "item_name": "Nitrile Examination Gloves",
+        "hospital_name": "",
+        "pin_code": "",
+    })]
     assert updates["status"] == DealStatus.AWAITING_PAYMENT
+    assert updates["payment_link_id"] == "plink_fake123"
+    assert updates["payment_link_url"] == "https://rzp.io/i/fake123"
+    assert "https://rzp.io/i/fake123" in updates["reply"]
 
 
 def test_issue_invoice_stub_transitions_status():
