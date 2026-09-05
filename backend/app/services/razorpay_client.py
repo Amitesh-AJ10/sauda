@@ -54,6 +54,21 @@ class RazorpayClient:
         data = response.json()
         return PaymentLink(id=data["id"], short_url=data["short_url"], status=data["status"])
 
+    def get_payment_link_status(self, payment_link_id: str) -> str:
+        """Fetch a payment link's real status from Razorpay ('created', 'paid', ...).
+
+        Used to poll for payment confirmation without a public webhook URL
+        (`GET /api/v1/deals` calls this for every awaiting-payment deal on
+        each poll) — genuinely asks Razorpay's own API, never simulated.
+        """
+        response = httpx.get(
+            f"{RAZORPAY_API_BASE_URL}/payment_links/{payment_link_id}",
+            auth=(self._key_id or "", self._key_secret or ""),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()["status"]
+
     def create_invoice(self, deal: DealState) -> Invoice:
         """Create a GST-compliant invoice for a paid deal.
 

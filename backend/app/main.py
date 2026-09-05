@@ -11,8 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from app.api.agent_commerce import router as agent_commerce_router
+from app.api.chat import chat_router, hospitals_router
 from app.api.deals import router as deals_router
-from app.api.demo import router as demo_router
 from app.api.razorpay_webhooks import router as razorpay_router
 from app.api.whatsapp import router as whatsapp_router
 from app.models.inventory import InventoryItem
@@ -42,7 +42,8 @@ app.include_router(whatsapp_router)
 app.include_router(razorpay_router)
 app.include_router(agent_commerce_router)
 app.include_router(deals_router)
-app.include_router(demo_router)
+app.include_router(hospitals_router)
+app.include_router(chat_router)
 
 
 @app.get("/health")

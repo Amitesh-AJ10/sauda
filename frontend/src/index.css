@@ -1,10 +1,28 @@
 @import "tailwindcss";
 
+/* Clean UI theme — adapted from DESIGN.md (Slush sticker-book system):
+   pastel section grounds, 1px black outlines, pill controls, flat fills,
+   no shadows/gradients. Display font (Antonio, Lateral substitute) is used
+   sparingly for the wordmark/big numerals; Inter carries all UI/body text. */
 @theme {
-  --font-pixel: "Press Start 2P", "Courier New", monospace;
-  --font-retro: "VT323", "Courier New", monospace;
+  --font-display: "Antonio", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-carbon: #000000;
+  --color-paper: #ffffff;
+  --color-sky-wash: #dceeff;
+  --color-concrete: #cccccc;
+  --color-soft-mist: #f4f4f4;
+  --color-electric-blue: #4da2ff;
+  --color-mint-pop: #55db9c;
+  --color-lavender: #e9ccff;
+  --color-ember: #fb4903;
+  --color-sunburst: #ffd731;
+  --color-voltage-violet: #5c4ade;
 }
 
 body {
-  image-rendering: pixelated;
+  background-color: var(--color-sky-wash);
+  color: var(--color-carbon);
+  font-family: var(--font-body);
 }

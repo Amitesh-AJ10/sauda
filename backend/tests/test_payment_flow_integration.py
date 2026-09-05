@@ -101,17 +101,23 @@ def test_negotiate_to_paid_to_invoiced_full_flow(monkeypatch):
     app.dependency_overrides[get_conversations] = lambda: conversations
     app.dependency_overrides[get_razorpay_client] = lambda: fake_razorpay
 
-    # 1. Buyer negotiates -> graph stops at AWAITING_PAYMENT, but along the
-    #    way a real payment link gets created.
+    # 1. Buyer negotiates -> graph stops at NEGOTIATING and asks whether to
+    #    send the payment link — no link exists yet.
     sender = "911234567890"
     response = client.post(
         "/webhooks/whatsapp", json=inbound_payload(sender, "Need 50 nitrile gloves, best rate?")
     )
     assert response.status_code == 200
+    assert conversations[sender].status == DealStatus.NEGOTIATING
+    assert conversations[sender].payment_link_id is None
+
+    # 1b. Only an explicit confirmation creates the real payment link.
+    response = client.post("/webhooks/whatsapp", json=inbound_payload(sender, "Yes, go ahead"))
+    assert response.status_code == 200
     assert conversations[sender].status == DealStatus.AWAITING_PAYMENT
     assert conversations[sender].payment_link_id == "plink_INTEG123"
     assert conversations[sender].payment_link_url == "https://rzp.io/i/INTEG123"
-    assert len(fake_whatsapp.sent) == 1  # the payment-link message
+    assert len(fake_whatsapp.sent) == 2  # negotiation message, then the payment-link message
 
     # 2. Razorpay confirms payment via webhook -> invoice generated, buyer
     #    notified on WhatsApp with the invoice link, deal Dispatched.
@@ -129,9 +135,9 @@ def test_negotiate_to_paid_to_invoiced_full_flow(monkeypatch):
     assert conversations[sender].status == DealStatus.DISPATCHED
     assert conversations[sender].invoice_url == "https://rzp.io/i/invINTEG123"
     assert len(fake_razorpay.invoice_calls) == 1
-    assert len(fake_whatsapp.sent) == 2  # payment-link message, then invoice message
-    assert fake_whatsapp.sent[1][0] == sender
-    assert "https://rzp.io/i/invINTEG123" in fake_whatsapp.sent[1][1]
+    assert len(fake_whatsapp.sent) == 3  # negotiation, payment-link, then invoice message
+    assert fake_whatsapp.sent[2][0] == sender
+    assert "https://rzp.io/i/invINTEG123" in fake_whatsapp.sent[2][1]
 
     # 3. Replaying the same event is a no-op: no duplicate invoice, no duplicate message.
     replay_response = client.post(
@@ -140,4 +146,4 @@ def test_negotiate_to_paid_to_invoiced_full_flow(monkeypatch):
     assert replay_response.status_code == 200
     assert conversations[sender].status == DealStatus.DISPATCHED
     assert len(fake_razorpay.invoice_calls) == 1
-    assert len(fake_whatsapp.sent) == 2
+    assert len(fake_whatsapp.sent) == 3

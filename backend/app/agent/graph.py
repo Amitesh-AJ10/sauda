@@ -1,8 +1,34 @@
 """Wires the node functions into a LangGraph `StateGraph`.
 
-Linear flow: extract_intent -> check_inventory -> negotiate -> await_payment
--> END, with short-circuits to END whenever check_inventory or negotiate
-lands on a terminal status (out of stock / declined) instead of progressing.
+Flow: guard_input -> interpret_reply -> [extract_intent -> check_inventory ->
+negotiate] -> END, with `interpret_reply` able to skip straight to
+`await_payment` instead of re-running extraction.
+
+`guard_input` runs first and never touches the LLM: a jailbreak/prompt-
+injection attempt in the buyer's own message is caught by Python before
+extract_intent ever sees it, so a compromised prompt can't talk its way
+into a payment link. Declined here ends the turn immediately.
+
+`interpret_reply` is the *only* path to `await_payment`: an explicit
+affirmative reply while the deal is `NEGOTIATING` (a price was just
+proposed) is the one and only thing that creates a real Razorpay payment
+link. Item + quantity + price alone are never enough — negotiate always
+stops and asks "shall I send the payment link?" instead of proceeding on
+its own, however complete the order looks. An explicit decline ("no",
+"not now") also ends the turn right there (`handled`) with a reply
+asking what to change, instead of falling through to negotiate again
+and re-quoting the exact same offer verbatim.
+
+Anything else re-enters extract_intent -> check_inventory -> negotiate, so
+a clarifying answer ("10ml"), a correction ("actually make it 20"), or a
+fresh lead all keep negotiating rather than being force-fit into a
+confirmation. extract_intent also classifies the message as on/off topic;
+a message unrelated to ordering supplies at all (`off_topic`) ends the
+turn right there with a graceful redirect instead of forcing item/qty
+extraction on it. check_inventory short-circuits straight to END whenever
+it still needs more from the buyer (no item, no quantity, an ambiguous
+item name) or the item's out of stock, instead of reaching negotiate with
+nothing real to price.
 
 `await_payment` is a deliberate stopping point: it only creates the payment
 link, it doesn't (and can't) know the deal is paid yet. `issue_invoice` and
@@ -24,12 +50,30 @@ from app.services.llm import LLMClient
 from app.services.razorpay_client import RazorpayClient, get_razorpay_client
 
 
+def _after_guard_input(state: DealState) -> str:
+    return END if state.status == DealStatus.DECLINED else "interpret_reply"
+
+
+def _after_interpret_reply(state: DealState) -> str:
+    if state.just_confirmed:
+        return "await_payment"
+    if state.handled:
+        return END
+    return "extract_intent"
+
+
+def _after_extract_intent(state: DealState) -> str:
+    return END if state.off_topic else "check_inventory"
+
+
 def _after_check_inventory(state: DealState) -> str:
-    return "negotiate" if state.status != DealStatus.OUT_OF_STOCK else END
-
-
-def _after_negotiate(state: DealState) -> str:
-    return "await_payment" if state.status != DealStatus.DECLINED else END
+    # OUT_OF_STOCK: a real, known item with insufficient stock.
+    # EXTRACTING_INTENT: still missing something (item, qty, or which
+    # variant of an ambiguous item) — asked for it and stopped, rather
+    # than negotiating a price for nothing.
+    if state.status in (DealStatus.OUT_OF_STOCK, DealStatus.EXTRACTING_INTENT):
+        return END
+    return "negotiate"
 
 
 def build_graph(
@@ -49,12 +93,17 @@ def build_graph(
 
     builder = StateGraph(DealState)
 
+    builder.add_node("guard_input", traced_node("guard_input")(nodes.guard_input))
+    builder.add_node(
+        "interpret_reply",
+        traced_node("interpret_reply")(partial(nodes.interpret_reply, inventory=inventory, llm=llm)),
+    )
     builder.add_node(
         "extract_intent", traced_node("extract_intent")(partial(nodes.extract_intent, llm=llm))
     )
     builder.add_node(
         "check_inventory",
-        traced_node("check_inventory")(partial(nodes.check_inventory, inventory=inventory)),
+        traced_node("check_inventory")(partial(nodes.check_inventory, inventory=inventory, llm=llm)),
     )
     builder.add_node(
         "negotiate",
@@ -65,12 +114,12 @@ def build_graph(
         traced_node("await_payment")(partial(nodes.await_payment, razorpay=razorpay)),
     )
 
-    builder.set_entry_point("extract_intent")
-    builder.add_edge("extract_intent", "check_inventory")
-    builder.add_conditional_edges(
-        "check_inventory", _after_check_inventory, ["negotiate", END]
-    )
-    builder.add_conditional_edges("negotiate", _after_negotiate, ["await_payment", END])
+    builder.set_entry_point("guard_input")
+    builder.add_conditional_edges("guard_input", _after_guard_input, ["interpret_reply", END])
+    builder.add_conditional_edges("interpret_reply", _after_interpret_reply, ["await_payment", "extract_intent", END])
+    builder.add_conditional_edges("extract_intent", _after_extract_intent, ["check_inventory", END])
+    builder.add_conditional_edges("check_inventory", _after_check_inventory, ["negotiate", END])
+    builder.add_edge("negotiate", END)
     builder.add_edge("await_payment", END)
 
     return builder.compile()

@@ -64,6 +64,43 @@ class InventoryService:
             return best_item
         return None
 
+    def resolve(self, item_name: str) -> tuple[InventoryItem | None, list[str]]:
+        """Resolve a free-text item name deterministically, never guessing between
+        genuinely distinct products.
+
+        Returns `(item, [])` for a confident single match — exact, unique
+        substring, or fuzzy fallback. Returns `(None, names)` when the query
+        matches more than one distinct catalog item by substring (e.g.
+        'disposable syringe' matches both the 5ml and 10ml SKU) — the
+        caller must ask the buyer which one, not silently pick one.
+        """
+        query = item_name.strip().lower()
+        if not query:
+            return None, []
+
+        for item in self._items:
+            if item.item_name.lower() == query:
+                return item, []
+
+        substring_matches = [item for item in self._items if query in item.item_name.lower()]
+        distinct_names = sorted({item.item_name for item in substring_matches})
+        if len(distinct_names) > 1:
+            return None, distinct_names
+        if len(distinct_names) == 1:
+            return substring_matches[0], []
+
+        best_item: InventoryItem | None = None
+        best_score = 0.0
+        for item in self._items:
+            score = SequenceMatcher(None, query, item.item_name.lower()).ratio()
+            if score > best_score:
+                best_score = score
+                best_item = item
+
+        if best_score >= FUZZY_MATCH_THRESHOLD:
+            return best_item, []
+        return None, []
+
     def has_stock(self, item_name: str, qty: int) -> bool:
         item = self.find(item_name)
         if item is None:

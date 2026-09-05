@@ -25,6 +25,10 @@ class ExtractedIntent(BaseModel):
     qty: int | None = None
     hospital_name: str | None = None
     pin_code: str | None = None
+    # True unless the message is clearly unrelated to ordering/quoting
+    # medical/surgical supplies — lets the graph redirect gracefully
+    # instead of forcing extraction on a stray off-topic message.
+    on_topic: bool = True
 
 
 class DealState(BaseModel):
@@ -54,3 +58,10 @@ class DealState(BaseModel):
     reply: str | None = None
 
     guardrail_violations: list[str] = Field(default_factory=list)
+
+    # Transient one-turn routing signals, set by `interpret_reply` and read
+    # by the graph's edge function right after — never meant to be read
+    # once the turn finishes. Not part of any API response model.
+    just_confirmed: bool = False
+    handled: bool = False
+    off_topic: bool = False

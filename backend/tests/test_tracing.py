@@ -48,7 +48,9 @@ def test_graph_run_produces_one_span_per_node_correctly_nested():
     )
     graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
 
-    graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"]))
+    negotiating = DealState(**graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"])))
+    negotiating.messages.append("Yes, go ahead")
+    graph.invoke(negotiating)
 
     spans = exporter.get_finished_spans()
     node_spans = {span.name for span in spans}
@@ -131,7 +133,12 @@ def test_llm_call_produces_a_span_with_model_prompt_response_and_latency():
     assert span.attributes["llm.latency_ms"] >= 0
 
 
-def test_tracing_off_by_default_does_not_break_the_agent():
+def test_tracing_off_by_default_does_not_break_the_agent(monkeypatch):
+    # Explicitly unset rather than relying on ambient state: importing
+    # app.main anywhere in the suite runs load_dotenv(), which leaks
+    # backend/.env's real PHOENIX_COLLECTOR_ENDPOINT (set for local Phoenix
+    # use) into the rest of the process otherwise.
+    monkeypatch.delenv("PHOENIX_COLLECTOR_ENDPOINT", raising=False)
     tracing.configure_tracing()  # no exporter, no env var -> stays off
     assert not tracing.is_tracing_enabled()
 
