@@ -1,9 +1,15 @@
 """Wires the node functions into a LangGraph `StateGraph`.
 
 Linear flow: extract_intent -> check_inventory -> negotiate -> await_payment
--> issue_invoice -> dispatch -> END, with short-circuits to END whenever
-check_inventory or negotiate lands on a terminal status (out of stock /
-declined) instead of progressing.
+-> END, with short-circuits to END whenever check_inventory or negotiate
+lands on a terminal status (out of stock / declined) instead of progressing.
+
+`await_payment` is a deliberate stopping point: it only creates the payment
+link, it doesn't (and can't) know the deal is paid yet. `issue_invoice` and
+`dispatch` are called directly by the Razorpay webhook handler once a real
+`payment_link.paid` event confirms payment — they're plain functions in
+`nodes.py`, not wired into this graph, so they aren't reachable from a
+message that hasn't been paid for.
 """
 
 from functools import lru_cache, partial
@@ -46,8 +52,6 @@ def build_graph(
     builder.add_node("check_inventory", partial(nodes.check_inventory, inventory=inventory))
     builder.add_node("negotiate", partial(nodes.negotiate, inventory=inventory, llm=llm))
     builder.add_node("await_payment", partial(nodes.await_payment, razorpay=razorpay))
-    builder.add_node("issue_invoice", nodes.issue_invoice)
-    builder.add_node("dispatch", nodes.dispatch)
 
     builder.set_entry_point("extract_intent")
     builder.add_edge("extract_intent", "check_inventory")
@@ -55,9 +59,7 @@ def build_graph(
         "check_inventory", _after_check_inventory, ["negotiate", END]
     )
     builder.add_conditional_edges("negotiate", _after_negotiate, ["await_payment", END])
-    builder.add_edge("await_payment", "issue_invoice")
-    builder.add_edge("issue_invoice", "dispatch")
-    builder.add_edge("dispatch", END)
+    builder.add_edge("await_payment", END)
 
     return builder.compile()
 

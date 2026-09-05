@@ -20,9 +20,9 @@ Close the loop with zero manual paperwork: on payment, autonomously generate a G
 
 ## Acceptance Criteria
 
-- [ ] A `payment_link.paid` webhook event results in exactly one invoice created via Razorpay's test-mode API with correct line items and amount.
-- [ ] The buyer receives one WhatsApp message containing the invoice PDF link.
-- [ ] `DealState.status` ends at `Dispatched` after this flow, with no manual steps.
+- [x] A `payment_link.paid` webhook event results in exactly one invoice created via Razorpay's test-mode API with correct line items and amount.
+- [x] The buyer receives one WhatsApp message containing the invoice PDF link.
+- [x] `DealState.status` ends at `Dispatched` after this flow, with no manual steps.
 
 ## Tests
 

@@ -6,6 +6,8 @@ unit-tested directly and later wrapped in tracing (Task 07) without a
 rewrite.
 """
 
+import httpx
+
 from app.agent.guardrails import check_text_guardrails, clamp_price, compute_unit_price
 from app.agent.prompts import EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
 from app.agent.state import DealState, DealStatus, ExtractedIntent
@@ -147,11 +149,26 @@ def await_payment(state: DealState, razorpay: RazorpayClient) -> dict:
     }
 
 
-def issue_invoice(state: DealState) -> dict:
-    """Stub: real Razorpay invoicing integration lands in Task 06."""
+def issue_invoice(state: DealState, razorpay: RazorpayClient) -> dict:
+    """Once payment is confirmed, autonomously generate the GST invoice.
+
+    Called directly by the Razorpay webhook handler once `status == Paid`
+    (not part of the WhatsApp-triggered graph — see await_payment). A
+    failed invoice call never silently marks the deal `Dispatched`; the
+    deal is left in `INVOICE_FAILED` for retry/inspection instead.
+    """
+    try:
+        invoice = razorpay.create_invoice(state)
+    except httpx.HTTPError:
+        return {"status": DealStatus.INVOICE_FAILED}
+
     return {
-        "status": DealStatus.ISSUING_INVOICE,
-        "reply": "Payment received. Your GST invoice is being generated and will follow shortly.",
+        "status": DealStatus.DISPATCHED,
+        "invoice_url": invoice.short_url,
+        "reply": (
+            f"Payment received! Here is your GST invoice: {invoice.short_url}. "
+            "Your order has been dispatched via our logistics partner."
+        ),
     }
 
 

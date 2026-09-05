@@ -1,8 +1,9 @@
-"""Thin wrapper around Razorpay's Payment Links API (raw HTTPS, no SDK).
+"""Thin wrapper around Razorpay's Payment Links and Invoices APIs (raw HTTPS,
+no SDK).
 
 Kept deliberately small, same shape as `WhatsAppService`: nodes depend only
-on `create_payment_link`, so tests can swap in a fake without ever hitting
-the network.
+on `create_payment_link` / `create_invoice`, so tests can swap in a fake
+without ever hitting the network.
 """
 
 import hashlib
@@ -13,10 +14,18 @@ from functools import lru_cache
 import httpx
 from pydantic import BaseModel
 
+from app.agent.state import DealState
+
 RAZORPAY_API_BASE_URL = "https://api.razorpay.com/v1"
 
 
 class PaymentLink(BaseModel):
+    id: str
+    short_url: str
+    status: str
+
+
+class Invoice(BaseModel):
     id: str
     short_url: str
     status: str
@@ -44,6 +53,40 @@ class RazorpayClient:
         response.raise_for_status()
         data = response.json()
         return PaymentLink(id=data["id"], short_url=data["short_url"], status=data["status"])
+
+    def create_invoice(self, deal: DealState) -> Invoice:
+        """Create a GST-compliant invoice for a paid deal.
+
+        `unit_price * qty` (in paise) is taken straight from the deterministic
+        `DealState` fields set earlier in the graph — never recomputed or
+        guessed here.
+        """
+        qty = deal.qty or 0
+        unit_price_paise = round((deal.unit_price or 0.0) * 100)
+        payload = {
+            "type": "invoice",
+            "description": f"Invoice for {qty} x {deal.item_name}",
+            "customer": {"name": deal.hospital_name or ""},
+            "line_items": [
+                {
+                    "name": deal.item_name or "",
+                    "amount": unit_price_paise,
+                    "currency": "INR",
+                    "quantity": qty,
+                }
+            ],
+            "currency": "INR",
+            "notes": {"pin_code": deal.pin_code or ""},
+        }
+        response = httpx.post(
+            f"{RAZORPAY_API_BASE_URL}/invoices",
+            json=payload,
+            auth=(self._key_id or "", self._key_secret or ""),
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return Invoice(id=data["id"], short_url=data["short_url"], status=data["status"])
 
 
 def verify_webhook_signature(body: bytes, signature: str, secret: str) -> bool:

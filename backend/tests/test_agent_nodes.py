@@ -1,7 +1,9 @@
+import httpx
+
 from app.agent import nodes
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.services.inventory import InventoryService
-from app.services.razorpay_client import PaymentLink
+from app.services.razorpay_client import Invoice, PaymentLink
 
 
 class FakeLLM:
@@ -163,10 +165,50 @@ def test_await_payment_creates_real_payment_link_with_agreed_amount():
     assert "https://rzp.io/i/fake123" in updates["reply"]
 
 
-def test_issue_invoice_stub_transitions_status():
-    state = DealState(status=DealStatus.AWAITING_PAYMENT)
-    updates = nodes.issue_invoice(state)
-    assert updates["status"] == DealStatus.ISSUING_INVOICE
+class FakeRazorpayInvoice:
+    """Mocked Razorpay client for `issue_invoice` — records the call, never hits the network."""
+
+    def __init__(self, invoice: Invoice | None = None, error: Exception | None = None):
+        self._invoice = invoice
+        self._error = error
+        self.calls: list[DealState] = []
+
+    def create_invoice(self, deal: DealState) -> Invoice:
+        self.calls.append(deal)
+        if self._error:
+            raise self._error
+        return self._invoice
+
+
+def test_issue_invoice_creates_invoice_and_transitions_to_dispatched():
+    invoice = Invoice(id="inv_fake123", short_url="https://rzp.io/i/invfake123", status="issued")
+    razorpay = FakeRazorpayInvoice(invoice=invoice)
+    state = DealState(
+        status=DealStatus.PAID,
+        item_name="Nitrile Examination Gloves",
+        qty=50,
+        unit_price=475.50,
+    )
+
+    updates = nodes.issue_invoice(state, razorpay=razorpay)
+
+    assert razorpay.calls == [state]
+    assert updates["status"] == DealStatus.DISPATCHED
+    assert updates["invoice_url"] == "https://rzp.io/i/invfake123"
+    assert "https://rzp.io/i/invfake123" in updates["reply"]
+
+
+def test_issue_invoice_failure_does_not_mark_dispatched():
+    razorpay = FakeRazorpayInvoice(
+        error=httpx.HTTPStatusError("boom", request=None, response=None)
+    )
+    state = DealState(status=DealStatus.PAID, item_name="Gloves", qty=50, unit_price=475.50)
+
+    updates = nodes.issue_invoice(state, razorpay=razorpay)
+
+    assert updates["status"] == DealStatus.INVOICE_FAILED
+    assert updates["status"] != DealStatus.DISPATCHED
+    assert "invoice_url" not in updates
 
 
 def test_dispatch_stub_transitions_status():

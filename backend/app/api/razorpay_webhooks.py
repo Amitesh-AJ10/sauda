@@ -1,4 +1,8 @@
-"""Inbound Razorpay webhook: verifies the signature, marks deals `Paid`.
+"""Inbound Razorpay webhook: verifies the signature, closes the loop.
+
+`payment_link.paid` -> deal marked `Paid` -> GST invoice generated -> invoice
+link pushed to the buyer on WhatsApp -> deal marked `Dispatched`, all
+synchronously, with zero manual merchant input (PRD F7/F8).
 
 Deals are looked up by `payment_link_id` across the same in-memory
 conversation store the WhatsApp webhook writes to (see app/api/whatsapp.py)
@@ -9,9 +13,11 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.agent import nodes
 from app.agent.state import DealState, DealStatus
 from app.api.whatsapp import get_conversations
-from app.services.razorpay_client import verify_webhook_signature
+from app.services.razorpay_client import RazorpayClient, get_razorpay_client, verify_webhook_signature
+from app.services.whatsapp import WhatsAppService, get_whatsapp_service
 
 router = APIRouter()
 
@@ -29,6 +35,8 @@ def _find_by_payment_link_id(
 async def receive_webhook(
     request: Request,
     conversations: dict[str, DealState] = Depends(get_conversations),
+    razorpay: RazorpayClient = Depends(get_razorpay_client),
+    whatsapp: WhatsAppService = Depends(get_whatsapp_service),
 ):
     body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
@@ -52,8 +60,15 @@ async def receive_webhook(
         return {"status": "ignored"}
 
     sender, state = match
-    if state.status == DealStatus.PAID:
+    if state.status == DealStatus.DISPATCHED:
         return {"status": "ok"}  # already processed — idempotent no-op on replay
 
-    conversations[sender] = state.model_copy(update={"status": DealStatus.PAID})
+    paid_state = state.model_copy(update={"status": DealStatus.PAID})
+    updates = nodes.issue_invoice(paid_state, razorpay=razorpay)
+    final_state = paid_state.model_copy(update=updates)
+    conversations[sender] = final_state
+
+    if final_state.status == DealStatus.DISPATCHED and final_state.reply:
+        whatsapp.send_message(sender, final_state.reply)
+
     return {"status": "ok"}

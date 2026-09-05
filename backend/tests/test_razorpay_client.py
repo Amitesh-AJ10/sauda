@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from app.agent.state import DealState
 from app.services.razorpay_client import RazorpayClient, verify_webhook_signature
 
 
@@ -51,6 +52,54 @@ def test_create_payment_link_sends_correct_payload(monkeypatch):
     assert link.id == "plink_ABC123"
     assert link.short_url == "https://rzp.io/i/ABC123"
     assert link.status == "created"
+
+
+# --- create_invoice ---------------------------------------------------------
+
+
+def test_create_invoice_sends_correct_line_items_and_amount(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, auth, timeout):
+        captured["url"] = url
+        captured["json"] = json
+        captured["auth"] = auth
+        return FakeResponse(
+            {"id": "inv_ABC123", "short_url": "https://rzp.io/i/invABC123", "status": "issued"}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = RazorpayClient(key_id="rzp_test_key", key_secret="rzp_test_secret")
+    deal = DealState(
+        item_name="Nitrile Examination Gloves",
+        qty=50,
+        unit_price=475.50,
+        hospital_name="City Hospital",
+        pin_code="411001",
+    )
+    invoice = client.create_invoice(deal)
+
+    assert captured["url"] == "https://api.razorpay.com/v1/invoices"
+    assert captured["json"] == {
+        "type": "invoice",
+        "description": "Invoice for 50 x Nitrile Examination Gloves",
+        "customer": {"name": "City Hospital"},
+        "line_items": [
+            {
+                "name": "Nitrile Examination Gloves",
+                "amount": 47550,
+                "currency": "INR",
+                "quantity": 50,
+            }
+        ],
+        "currency": "INR",
+        "notes": {"pin_code": "411001"},
+    }
+    assert captured["auth"] == ("rzp_test_key", "rzp_test_secret")
+    assert invoice.id == "inv_ABC123"
+    assert invoice.short_url == "https://rzp.io/i/invABC123"
+    assert invoice.status == "issued"
 
 
 # --- verify_webhook_signature -----------------------------------------------

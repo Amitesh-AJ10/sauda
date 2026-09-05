@@ -15,6 +15,7 @@ class DealStatus(StrEnum):
     DISPATCHED = "dispatched"
     OUT_OF_STOCK = "out_of_stock"
     DECLINED = "declined"
+    INVOICE_FAILED = "invoice_failed"
 
 
 class ExtractedIntent(BaseModel):
@@ -47,6 +48,7 @@ class DealState(BaseModel):
 
     payment_link_id: str | None = None
     payment_link_url: str | None = None
+    invoice_url: str | None = None
 
     status: DealStatus = DealStatus.EXTRACTING_INTENT
     reply: str | None = None
