@@ -13,35 +13,32 @@ Sauda replies to a hospital's WhatsApp message in seconds: checks live inventory
 ## Architecture
 
 ```mermaid
+---
+config:
+  layout: elk
+---
 flowchart LR
-    H[🏥 Hospital<br/>WhatsApp chat]
-    G{🧠 Sauda Agent<br/>LangGraph}
-    I[(📦 Inventory<br/>mock_inventory.csv)]
-    R[💳 Razorpay<br/>Payment Link + Invoice]
-    D[📊 Merchant Dashboard]
-    P[🔭 Phoenix<br/>tracing]
+    H["🏥 Hospital<br/>WhatsApp"] -->|1. Request quote| G["🧠 Sauda Agent"]
+    G -->|2. Check price & stock| I[("📦 Inventory")]
+    I -->|3. Availability| G
+    G -->|4. Create payment link| R["💳 Razorpay"]
+    R -->|5. Payment confirmed| G
+    G -->|6. Send GST invoice| H
 
-    H -->|message| G
-    G -->|stock + price lookup| I
-    G -->|guardrails: no invented stock/price| G
-    G -->|payment link| R
-    R -->|paid webhook| G
-    G -->|GST invoice| H
-    G -.traces.-> P
-    G -->|live deal state| D
+    G -.->|Live status| D["📊 Dashboard"]
+    G -.->|Traces| P["🔭 Phoenix"]
 
-    classDef hospital fill:#dceeff,stroke:#111,stroke-width:1px,color:#111
-    classDef agent fill:#e9ccff,stroke:#111,stroke-width:1px,color:#111
-    classDef data fill:#ffd731,stroke:#111,stroke-width:1px,color:#111
-    classDef pay fill:#55db9c,stroke:#111,stroke-width:1px,color:#111
-    classDef obs fill:#f4f4f4,stroke:#111,stroke-width:1px,color:#111
+    classDef interface fill:#eef2ff,stroke:#818cf8,stroke-width:1.5px,color:#312e81
+    classDef core fill:#f5f3ff,stroke:#a78bfa,stroke-width:1.5px,color:#4c1d95
+    classDef data fill:#fefce8,stroke:#facc15,stroke-width:1.5px,color:#713f12
+    classDef payment fill:#f0fdf4,stroke:#4ade80,stroke-width:1.5px,color:#166534
+    classDef observe fill:#ecfeff,stroke:#22d3ee,stroke-width:1.5px,color:#155e75
 
-    class H hospital
-    class G agent
+    class H interface
+    class G core
     class I data
-    class R pay
-    class D obs
-    class P obs
+    class R payment
+    class D,P observe
 ```
 
 ## Repo layout
