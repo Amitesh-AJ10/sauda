@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 # Load backend/.env into the process before anything below reads os.environ.
 # Real env vars (e.g. set in CI or a deploy) always win — load_dotenv never
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 load_dotenv()
 
 from app.api.agent_commerce import router as agent_commerce_router
+from app.api.deals import router as deals_router
 from app.api.razorpay_webhooks import router as razorpay_router
 from app.api.whatsapp import router as whatsapp_router
 from app.models.inventory import InventoryItem
@@ -27,9 +29,18 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Sauda", lifespan=_lifespan)
+# Dev-only: lets the Vite dev server (a different origin) poll the API
+# directly. Tighten to a specific origin before this goes past a demo.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(whatsapp_router)
 app.include_router(razorpay_router)
 app.include_router(agent_commerce_router)
+app.include_router(deals_router)
 
 
 @app.get("/health")
