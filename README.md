@@ -49,6 +49,10 @@ npm run dev
 
 Or, from the repo root: `make backend`, `make frontend`, `make test-backend`.
 
+## Known limitations
+
+- Conversation state (per-sender `DealState`) lives in an in-memory dict, not a database — it resets on every backend restart. Acceptable for the buildathon demo; a real deployment needs durable storage.
+
 ## Status
 
 In active development on `dev`, task by task per [docs/PRD.md §9](docs/PRD.md#9-milestones-maps-to-docstasks).

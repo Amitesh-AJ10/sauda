@@ -21,9 +21,9 @@ Connect the agent graph to real inbound/outbound WhatsApp messages via the Whats
 
 ## Acceptance Criteria
 
-- [ ] Webhook verification handshake passes Meta's test (`GET` echoes challenge when `verify_token` matches).
-- [ ] A simulated inbound text message payload (posted via test client, not real WhatsApp) drives the agent graph and triggers exactly one outbound `send_message` call with a well-formed reply.
-- [ ] Unknown senders start a fresh `DealState`; known senders resume theirs.
+- [x] Webhook verification handshake passes Meta's test (`GET` echoes challenge when `verify_token` matches).
+- [x] A simulated inbound text message payload (posted via test client, not real WhatsApp) drives the agent graph and triggers exactly one outbound `send_message` call with a well-formed reply.
+- [x] Unknown senders start a fresh `DealState`; known senders resume theirs.
 
 ## Tests
 

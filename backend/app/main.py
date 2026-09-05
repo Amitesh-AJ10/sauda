@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException
 
+from app.api.whatsapp import router as whatsapp_router
 from app.models.inventory import InventoryItem
 from app.services.inventory import get_inventory_service
 
 app = FastAPI(title="Sauda")
+app.include_router(whatsapp_router)
 
 
 @app.get("/health")

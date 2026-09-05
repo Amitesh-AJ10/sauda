@@ -6,7 +6,7 @@ check_inventory or negotiate lands on a terminal status (out of stock /
 declined) instead of progressing.
 """
 
-from functools import partial
+from functools import lru_cache, partial
 
 from langgraph.graph import END, StateGraph
 
@@ -57,3 +57,9 @@ def build_graph(
     builder.add_edge("dispatch", END)
 
     return builder.compile()
+
+
+@lru_cache
+def get_compiled_graph():
+    """The real, Groq/InventoryService-backed graph, built once and cached."""
+    return build_graph()
