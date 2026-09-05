@@ -63,4 +63,34 @@ describe('HospitalChatPage', () => {
     )
     expect(await screen.findByText('We can offer 50 units.')).toBeInTheDocument()
   })
+
+  it('does not show a pay-now button once an invoice exists — only view invoice', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<HospitalChatPage hospitalId="city-care" hospitalName="City Care Hospital" onLogout={() => {}} />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'city-care',
+        status: 'dispatched',
+        reply: 'Already paid and dispatched!',
+        messages: ['payment done'],
+        payment_link_url: 'https://rzp.io/i/stale',
+        invoice_url: 'https://rzp.io/i/invfake',
+        guardrail_violations: [],
+        audit_trail: [],
+      }),
+    })
+
+    await user.type(screen.getByTestId('chat-input'), 'payment done')
+    await user.click(screen.getByTestId('chat-send'))
+
+    await screen.findByText('Already paid and dispatched!')
+    expect(screen.queryByTestId('chat-payment-link')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-invoice-link')).toHaveAttribute('href', 'https://rzp.io/i/invfake')
+  })
 })

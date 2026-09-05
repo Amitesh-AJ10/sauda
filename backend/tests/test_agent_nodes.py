@@ -242,7 +242,28 @@ def test_extract_intent_no_messages_returns_no_updates():
     llm = FakeLLM(structured=ExtractedIntent())
     state = DealState()
 
-    assert nodes.extract_intent(state, llm=llm) == {}
+    assert nodes.extract_intent(state, llm=llm) == {"off_topic": False}
+
+
+def test_extract_intent_off_topic_message_gets_a_graceful_redirect():
+    llm = FakeLLM(structured=ExtractedIntent(on_topic=False))
+    state = DealState(messages=["what's the weather like today?"])
+
+    updates = nodes.extract_intent(state, llm=llm)
+
+    assert updates["off_topic"] is True
+    assert updates["status"] == DealStatus.EXTRACTING_INTENT
+    assert "surgical/medical supplies" in updates["reply"]
+
+
+def test_extract_intent_on_topic_message_is_unaffected():
+    llm = FakeLLM(structured=ExtractedIntent(item_name="Gloves", on_topic=True))
+    state = DealState(messages=["need gloves"])
+
+    updates = nodes.extract_intent(state, llm=llm)
+
+    assert updates["off_topic"] is False
+    assert updates["item_name"] == "Gloves"
 
 
 def test_extract_intent_treats_a_zero_qty_as_not_provided():
@@ -420,6 +441,49 @@ def test_negotiate_passes_the_buyers_actual_message_and_price_bounds_to_the_llm(
     nodes.negotiate(state, inventory=inventory, llm=CapturingLLM())
 
     assert "is the price negotiable?" in captured["prompt"]
+
+
+def test_negotiate_tells_the_llm_hospital_and_pin_are_already_on_file():
+    # Regression: the LLM kept re-asking for hospital name/PIN code every
+    # single turn even when both were already known (pre-seeded from the
+    # hospital directory), because it was only ever given the raw values,
+    # not an explicit "don't ask again" fact.
+    inventory = make_inventory()
+    captured: dict = {}
+
+    class CapturingLLM:
+        def complete_text(self, system, user):
+            captured["prompt"] = user
+            return "Approved."
+
+    state = DealState(
+        item_name="Nitrile Examination Gloves (Box of 100)",
+        qty=50,
+        hospital_name="Apollo North",
+        pin_code="560001",
+        messages=["50 units, price?"],
+    )
+
+    nodes.negotiate(state, inventory=inventory, llm=CapturingLLM())
+
+    assert "ALREADY confirmed and on file" in captured["prompt"]
+    assert "do not ask for them again" in captured["prompt"]
+
+
+def test_negotiate_tells_the_llm_what_logistics_info_is_still_missing():
+    inventory = make_inventory()
+    captured: dict = {}
+
+    class CapturingLLM:
+        def complete_text(self, system, user):
+            captured["prompt"] = user
+            return "Approved."
+
+    state = DealState(item_name="Nitrile Examination Gloves (Box of 100)", qty=50, messages=["50 units, price?"])
+
+    nodes.negotiate(state, inventory=inventory, llm=CapturingLLM())
+
+    assert "ask for both" in captured["prompt"]
     assert "lowest this item could ever be priced" in captured["prompt"]
 
 

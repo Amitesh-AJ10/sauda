@@ -22,9 +22,12 @@ and re-quoting the exact same offer verbatim.
 Anything else re-enters extract_intent -> check_inventory -> negotiate, so
 a clarifying answer ("10ml"), a correction ("actually make it 20"), or a
 fresh lead all keep negotiating rather than being force-fit into a
-confirmation. check_inventory short-circuits straight to END whenever it
-still needs more from the buyer (no item, no quantity, an ambiguous item
-name) or the item's out of stock, instead of reaching negotiate with
+confirmation. extract_intent also classifies the message as on/off topic;
+a message unrelated to ordering supplies at all (`off_topic`) ends the
+turn right there with a graceful redirect instead of forcing item/qty
+extraction on it. check_inventory short-circuits straight to END whenever
+it still needs more from the buyer (no item, no quantity, an ambiguous
+item name) or the item's out of stock, instead of reaching negotiate with
 nothing real to price.
 
 `await_payment` is a deliberate stopping point: it only creates the payment
@@ -57,6 +60,10 @@ def _after_interpret_reply(state: DealState) -> str:
     if state.handled:
         return END
     return "extract_intent"
+
+
+def _after_extract_intent(state: DealState) -> str:
+    return END if state.off_topic else "check_inventory"
 
 
 def _after_check_inventory(state: DealState) -> str:
@@ -110,7 +117,7 @@ def build_graph(
     builder.set_entry_point("guard_input")
     builder.add_conditional_edges("guard_input", _after_guard_input, ["interpret_reply", END])
     builder.add_conditional_edges("interpret_reply", _after_interpret_reply, ["await_payment", "extract_intent", END])
-    builder.add_edge("extract_intent", "check_inventory")
+    builder.add_conditional_edges("extract_intent", _after_extract_intent, ["check_inventory", END])
     builder.add_conditional_edges("check_inventory", _after_check_inventory, ["negotiate", END])
     builder.add_edge("negotiate", END)
     builder.add_edge("await_payment", END)

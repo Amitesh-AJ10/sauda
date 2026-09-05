@@ -125,6 +125,17 @@ def test_greeting_with_no_item_asks_for_it_instead_of_declaring_out_of_stock():
     assert result.get("payment_link_id") is None
 
 
+def test_off_topic_message_gets_a_graceful_redirect_and_never_reaches_check_inventory():
+    llm = FakeLLM(structured=ExtractedIntent(on_topic=False), text="this should never be called")
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
+
+    result = graph.invoke(DealState(messages=["what's the weather like today?"]))
+
+    assert result["status"] == DealStatus.EXTRACTING_INTENT
+    assert "surgical/medical supplies" in result["reply"]
+    assert result.get("item_name") is None
+
+
 def test_out_of_stock_short_circuits_with_apology_never_inventing_stock():
     llm = FakeLLM(
         structured=ExtractedIntent(item_name="Skin Stapler", qty=500),

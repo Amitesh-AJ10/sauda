@@ -212,9 +212,15 @@ def extract_intent(state: DealState, llm: LLMClient) -> dict:
     one" has no item/qty of its own; it only means anything against the
     context of what was already asked. Extracting the last message alone
     silently lost these every time.
+
+    Also classifies the message as on/off topic — a stray message about
+    something unrelated to ordering medical/surgical supplies (see
+    `ExtractedIntent.on_topic`) short-circuits here with a graceful
+    redirect (`off_topic=True`) instead of forcing item/qty extraction on
+    something that was never about a product at all.
     """
     if not state.messages:
-        return {}
+        return {"off_topic": False}
 
     last_message = state.messages[-1]
     conversation = "\n".join(f"- {message}" for message in state.messages)
@@ -231,7 +237,15 @@ def extract_intent(state: DealState, llm: LLMClient) -> dict:
         ExtractedIntent,
     )
 
-    updates: dict = {}
+    if not extracted.on_topic:
+        return {
+            "off_topic": True,
+            "status": DealStatus.EXTRACTING_INTENT,
+            "reply": "I can only help with quotes and orders for surgical/medical supplies — "
+            "is there a product I can help you with?",
+        }
+
+    updates: dict = {"off_topic": False}
     if extracted.item_name:
         updates["item_name"] = extracted.item_name
     # A real order quantity is always positive — 0 (which the LLM sometimes
@@ -320,6 +334,28 @@ def check_inventory(state: DealState, inventory: InventoryService, llm: LLMClien
     }
 
 
+def _logistics_fact(state: DealState) -> str:
+    """A single explicit fact about hospital name / PIN code status, so every
+    LLM call that might mention logistics knows definitively whether to ask.
+
+    Without this, the system prompt's generic "ask for hospital name and
+    PIN" template step fired on every single reply even once both were
+    already on file (pre-seeded from the hospital directory) — the model
+    had no per-call visibility into whether they'd already been given, so
+    it kept asking a question that was already answered turns ago.
+    """
+    if state.hospital_name and state.pin_code:
+        return (
+            f"Hospital name ({state.hospital_name}) and PIN code ({state.pin_code}) are "
+            "ALREADY confirmed and on file — do not ask for them again."
+        )
+    if state.hospital_name:
+        return f"Hospital name ({state.hospital_name}) is on file, but the PIN code is still missing — ask for the PIN code."
+    if state.pin_code:
+        return f"PIN code ({state.pin_code}) is on file, but the hospital name is still missing — ask for the hospital name."
+    return "Neither hospital name nor PIN code is on file yet — ask for both."
+
+
 def _answer_and_ask_for_qty(item, state: DealState, llm: LLMClient) -> str:
     """LLM-phrased reply grounded only in the catalog's own facts (item name,
     stock, `notes`) — answers whatever the buyer just asked (spec, availability,
@@ -334,6 +370,7 @@ def _answer_and_ask_for_qty(item, state: DealState, llm: LLMClient) -> str:
         pack_size_fact=pack_size_fact,
         notes=item.notes,
         message=last_message,
+        logistics_fact=_logistics_fact(state),
     )
     reply = llm.complete_text(SYSTEM_PROMPT, prompt)
 
@@ -378,8 +415,7 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
         qty=qty,
         unit_price=unit_price,
         min_price=min_price,
-        hospital_name=state.hospital_name or "not provided yet",
-        pin_code=state.pin_code or "not provided yet",
+        logistics_fact=_logistics_fact(state),
         buyer_message=state.messages[-1] if state.messages else "",
     )
     reply = llm.complete_text(SYSTEM_PROMPT, prompt)
