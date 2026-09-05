@@ -1,9 +1,12 @@
 import json
 import os
+import time
 from typing import TypeVar
 
 from groq import Groq
 from pydantic import BaseModel
+
+from app.observability.tracing import get_tracer
 
 DEFAULT_MODEL = "qwen/qwen3.8-27b"
 
@@ -31,30 +34,48 @@ class LLMClient:
 
     def complete_text(self, system: str, user: str) -> str:
         """Plain chat completion, returns the assistant message content."""
-        response = self.client.chat.completions.create(
-            model=self._model,
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return response.choices[0].message.content or ""
+        tracer = get_tracer()
+        with tracer.start_as_current_span("llm.complete_text") as span:
+            span.set_attribute("llm.model", self._model)
+            span.set_attribute("llm.prompt.system", system[:2000])
+            span.set_attribute("llm.prompt.user", user[:2000])
+            start = time.perf_counter()
+            response = self.client.chat.completions.create(
+                model=self._model,
+                temperature=0.2,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+            span.set_attribute("llm.latency_ms", (time.perf_counter() - start) * 1000)
+            content = response.choices[0].message.content or ""
+            span.set_attribute("llm.response", content[:2000])
+            return content
 
     def complete_structured(self, system: str, user: str, schema: type[T]) -> T:
         """Chat completion constrained to JSON, validated against `schema`."""
-        response = self.client.chat.completions.create(
-            model=self._model,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system},
-                {
-                    "role": "user",
-                    "content": f"{user}\n\nRespond with a single JSON object matching this "
-                    f"schema: {schema.model_json_schema()}",
-                },
-            ],
-        )
-        content = response.choices[0].message.content or "{}"
-        return schema.model_validate(json.loads(content))
+        tracer = get_tracer()
+        with tracer.start_as_current_span("llm.complete_structured") as span:
+            span.set_attribute("llm.model", self._model)
+            span.set_attribute("llm.schema", schema.__name__)
+            span.set_attribute("llm.prompt.system", system[:2000])
+            span.set_attribute("llm.prompt.user", user[:2000])
+            start = time.perf_counter()
+            response = self.client.chat.completions.create(
+                model=self._model,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system},
+                    {
+                        "role": "user",
+                        "content": f"{user}\n\nRespond with a single JSON object matching this "
+                        f"schema: {schema.model_json_schema()}",
+                    },
+                ],
+            )
+            span.set_attribute("llm.latency_ms", (time.perf_counter() - start) * 1000)
+            content = response.choices[0].message.content or "{}"
+            span.set_attribute("llm.response", content[:2000])
+            return schema.model_validate(json.loads(content))

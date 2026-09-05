@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.agent import nodes
 from app.agent.state import DealState, DealStatus
 from app.api.whatsapp import get_conversations
+from app.observability.tracing import traced_node
 from app.services.razorpay_client import RazorpayClient, get_razorpay_client, verify_webhook_signature
 from app.services.whatsapp import WhatsAppService, get_whatsapp_service
 
@@ -64,7 +65,7 @@ async def receive_webhook(
         return {"status": "ok"}  # already processed — idempotent no-op on replay
 
     paid_state = state.model_copy(update={"status": DealStatus.PAID})
-    updates = nodes.issue_invoice(paid_state, razorpay=razorpay)
+    updates = traced_node("issue_invoice")(nodes.issue_invoice)(paid_state, razorpay=razorpay)
     final_state = paid_state.model_copy(update=updates)
     conversations[sender] = final_state
 

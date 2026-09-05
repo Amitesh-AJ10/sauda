@@ -1,11 +1,25 @@
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 
 from app.api.razorpay_webhooks import router as razorpay_router
 from app.api.whatsapp import router as whatsapp_router
 from app.models.inventory import InventoryItem
+from app.observability import tracing
 from app.services.inventory import get_inventory_service
 
-app = FastAPI(title="Sauda")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Wire up Phoenix tracing if `PHOENIX_COLLECTOR_ENDPOINT` is set. Left
+    # unset, `tracing.get_tracer()` falls back to a no-op tracer everywhere
+    # it's used — the agent runs exactly the same either way.
+    tracing.configure_tracing()
+    yield
+
+
+app = FastAPI(title="Sauda", lifespan=_lifespan)
 app.include_router(whatsapp_router)
 app.include_router(razorpay_router)
 
@@ -13,6 +27,24 @@ app.include_router(razorpay_router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health/tracing")
+def health_tracing() -> dict[str, str | bool]:
+    """Debug endpoint: is tracing on, and where would traces show up.
+
+    To view traces locally: run a Phoenix instance (e.g.
+    `docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest` or
+    `python -m phoenix.server.main serve`), set
+    `PHOENIX_COLLECTOR_ENDPOINT` (e.g. `http://localhost:4318/v1/traces`)
+    in `.env`, restart the backend, and open http://localhost:6006 — every
+    node, LLM call, and guardrail check for a deal shows up as a nested
+    span there.
+    """
+    return {
+        "enabled": tracing.is_tracing_enabled(),
+        "collector_endpoint": os.environ.get("PHOENIX_COLLECTOR_ENDPOINT") or "",
+    }
 
 
 @app.get("/inventory")

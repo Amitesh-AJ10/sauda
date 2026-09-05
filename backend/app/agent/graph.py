@@ -18,6 +18,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agent import nodes
 from app.agent.state import DealState, DealStatus
+from app.observability.tracing import traced_node
 from app.services.inventory import InventoryService, get_inventory_service
 from app.services.llm import LLMClient
 from app.services.razorpay_client import RazorpayClient, get_razorpay_client
@@ -48,10 +49,21 @@ def build_graph(
 
     builder = StateGraph(DealState)
 
-    builder.add_node("extract_intent", partial(nodes.extract_intent, llm=llm))
-    builder.add_node("check_inventory", partial(nodes.check_inventory, inventory=inventory))
-    builder.add_node("negotiate", partial(nodes.negotiate, inventory=inventory, llm=llm))
-    builder.add_node("await_payment", partial(nodes.await_payment, razorpay=razorpay))
+    builder.add_node(
+        "extract_intent", traced_node("extract_intent")(partial(nodes.extract_intent, llm=llm))
+    )
+    builder.add_node(
+        "check_inventory",
+        traced_node("check_inventory")(partial(nodes.check_inventory, inventory=inventory)),
+    )
+    builder.add_node(
+        "negotiate",
+        traced_node("negotiate")(partial(nodes.negotiate, inventory=inventory, llm=llm)),
+    )
+    builder.add_node(
+        "await_payment",
+        traced_node("await_payment")(partial(nodes.await_payment, razorpay=razorpay)),
+    )
 
     builder.set_entry_point("extract_intent")
     builder.add_edge("extract_intent", "check_inventory")

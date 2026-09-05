@@ -11,6 +11,7 @@ import httpx
 from app.agent.guardrails import check_text_guardrails, clamp_price, compute_unit_price
 from app.agent.prompts import EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
 from app.agent.state import DealState, DealStatus, ExtractedIntent
+from app.observability.tracing import record_guardrail_result, traced_guardrail
 from app.services.inventory import InventoryService
 from app.services.llm import LLMClient
 from app.services.razorpay_client import RazorpayClient
@@ -83,7 +84,13 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
         return {"status": DealStatus.DECLINED, "reply": "Sorry, that item is no longer available."}
 
     qty = state.qty or item.stock_qty
-    unit_price = clamp_price(compute_unit_price(item.base_price, qty), item.base_price)
+    raw_price = compute_unit_price(item.base_price, qty)
+    with traced_guardrail("price_bounds") as span:
+        unit_price = clamp_price(raw_price, item.base_price)
+        clamped = unit_price != raw_price
+        record_guardrail_result(
+            span, passed=not clamped, detail=f"proposed {raw_price} -> clamped to {unit_price}"
+        )
 
     prompt = NEGOTIATION_INSTRUCTIONS.format(
         item_name=item.item_name,
@@ -95,9 +102,11 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
     )
     reply = llm.complete_text(SYSTEM_PROMPT, prompt)
 
-    violations = check_text_guardrails(reply)
-    if violations:
-        reply = _safe_negotiation_reply(item.item_name, qty, unit_price, state)
+    with traced_guardrail("no_sla_promise") as span:
+        violations = check_text_guardrails(reply)
+        record_guardrail_result(span, passed=not violations, detail=", ".join(violations))
+        if violations:
+            reply = _safe_negotiation_reply(item.item_name, qty, unit_price, state)
 
     return {
         "unit_price": unit_price,
