@@ -4,9 +4,13 @@
 link pushed to the buyer on WhatsApp -> deal marked `Dispatched`, all
 synchronously, with zero manual merchant input (PRD F7/F8).
 
-Deals are looked up by `payment_link_id` across the same in-memory
-conversation store the WhatsApp webhook writes to (see app/api/whatsapp.py)
-— fine for the buildathon scope, not durable across restarts.
+Deals are looked up by `payment_link_id` across both in-memory stores a
+payment link can originate from: the WhatsApp conversation store (see
+app/api/whatsapp.py) and the AI-buyer-agent order store (see
+app/api/agent_commerce.py) — fine for the buildathon scope, not durable
+across restarts. Only a WhatsApp-originated deal gets a WhatsApp
+notification; an agent order is expected to poll `GET /api/v1/orders/{id}`
+instead.
 """
 
 import os
@@ -15,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.agent import nodes
 from app.agent.state import DealState, DealStatus
+from app.api.agent_commerce import get_orders
 from app.api.whatsapp import get_conversations
 from app.observability.tracing import traced_node
 from app.services.razorpay_client import RazorpayClient, get_razorpay_client, verify_webhook_signature
@@ -24,11 +29,11 @@ router = APIRouter()
 
 
 def _find_by_payment_link_id(
-    conversations: dict[str, DealState], payment_link_id: str
+    store: dict[str, DealState], payment_link_id: str
 ) -> tuple[str, DealState] | None:
-    for sender, state in conversations.items():
+    for key, state in store.items():
         if state.payment_link_id == payment_link_id:
-            return sender, state
+            return key, state
     return None
 
 
@@ -36,6 +41,7 @@ def _find_by_payment_link_id(
 async def receive_webhook(
     request: Request,
     conversations: dict[str, DealState] = Depends(get_conversations),
+    orders: dict[str, DealState] = Depends(get_orders),
     razorpay: RazorpayClient = Depends(get_razorpay_client),
     whatsapp: WhatsAppService = Depends(get_whatsapp_service),
 ):
@@ -56,20 +62,25 @@ async def receive_webhook(
     if not payment_link_id:
         return {"status": "ignored"}
 
-    match = _find_by_payment_link_id(conversations, payment_link_id)
+    store = conversations
+    match = _find_by_payment_link_id(store, payment_link_id)
+    if match is None:
+        store = orders
+        match = _find_by_payment_link_id(store, payment_link_id)
     if match is None:
         return {"status": "ignored"}
 
-    sender, state = match
+    key, state = match
     if state.status == DealStatus.DISPATCHED:
         return {"status": "ok"}  # already processed — idempotent no-op on replay
 
     paid_state = state.model_copy(update={"status": DealStatus.PAID})
     updates = traced_node("issue_invoice")(nodes.issue_invoice)(paid_state, razorpay=razorpay)
     final_state = paid_state.model_copy(update=updates)
-    conversations[sender] = final_state
+    store[key] = final_state
 
-    if final_state.status == DealStatus.DISPATCHED and final_state.reply:
-        whatsapp.send_message(sender, final_state.reply)
+    is_whatsapp_deal = store is conversations
+    if is_whatsapp_deal and final_state.status == DealStatus.DISPATCHED and final_state.reply:
+        whatsapp.send_message(key, final_state.reply)
 
     return {"status": "ok"}

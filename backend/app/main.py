@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
+from app.api.agent_commerce import router as agent_commerce_router
 from app.api.razorpay_webhooks import router as razorpay_router
 from app.api.whatsapp import router as whatsapp_router
 from app.models.inventory import InventoryItem
@@ -22,6 +23,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Sauda", lifespan=_lifespan)
 app.include_router(whatsapp_router)
 app.include_router(razorpay_router)
+app.include_router(agent_commerce_router)
 
 
 @app.get("/health")
