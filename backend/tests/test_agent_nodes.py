@@ -87,6 +87,18 @@ def test_extract_intent_no_messages_returns_no_updates():
     assert nodes.extract_intent(state, llm=llm) == {}
 
 
+def test_extract_intent_treats_a_zero_qty_as_not_provided():
+    # The LLM sometimes returns 0 instead of leaving qty blank when the
+    # buyer never mentioned a quantity — 0 units is never a real order.
+    llm = FakeLLM(structured=ExtractedIntent(item_name="Skin Stapler", qty=0))
+    state = DealState(messages=["do you have skin staplers?"])
+
+    updates = nodes.extract_intent(state, llm=llm)
+
+    assert "qty" not in updates
+    assert updates["item_name"] == "Skin Stapler"
+
+
 # --- check_inventory ------------------------------------------------------
 
 
@@ -132,6 +144,29 @@ def test_check_inventory_asks_for_the_item_when_none_was_mentioned():
     assert "None" not in updates["reply"]
 
 
+def test_check_inventory_asks_for_qty_when_item_named_but_no_quantity_given():
+    # Regression: "do you have skin staplers?" used to fall through to
+    # negotiate/await_payment with qty=0/None, which could create a real
+    # ₹0 Razorpay payment link for "0 x Skin Stapler".
+    inventory = make_inventory()
+    state = DealState(item_name="Skin Stapler (Disposable)", qty=None)
+
+    updates = nodes.check_inventory(state, inventory=inventory)
+
+    assert updates["status"] == DealStatus.EXTRACTING_INTENT
+    assert "how many units" in updates["reply"].lower()
+    assert "0" not in updates["reply"]
+
+
+def test_check_inventory_zero_qty_is_treated_the_same_as_missing():
+    inventory = make_inventory()
+    state = DealState(item_name="Skin Stapler (Disposable)", qty=0)
+
+    updates = nodes.check_inventory(state, inventory=inventory)
+
+    assert updates["status"] == DealStatus.EXTRACTING_INTENT
+
+
 # --- negotiate --------------------------------------------------------
 
 
@@ -147,6 +182,7 @@ def test_negotiate_computes_price_python_side_and_phrases_via_llm():
     assert updates["unit_price"] >= round(item.base_price * 0.90, 2)
     assert updates["status"] == DealStatus.NEGOTIATING
     assert updates["guardrail_violations"] == []
+    assert updates["qty"] == 50
 
 
 def test_negotiate_guardrail_violation_is_caught_and_replaced():
@@ -197,6 +233,20 @@ def test_await_payment_creates_real_payment_link_with_agreed_amount():
     assert updates["payment_link_id"] == "plink_fake123"
     assert updates["payment_link_url"] == "https://rzp.io/i/fake123"
     assert "https://rzp.io/i/fake123" in updates["reply"]
+
+
+def test_await_payment_refuses_to_create_a_zero_amount_link():
+    # Regression: qty=0 (or an unset unit_price) must never reach Razorpay
+    # as a real ₹0 payment link — decline instead of calling create_payment_link.
+    link = PaymentLink(id="plink_should_not_be_used", short_url="https://rzp.io/i/x", status="created")
+    razorpay = FakeRazorpay(link)
+    state = DealState(status=DealStatus.NEGOTIATING, item_name="Skin Stapler", qty=0, unit_price=630.5)
+
+    updates = nodes.await_payment(state, razorpay=razorpay)
+
+    assert razorpay.calls == []
+    assert updates["status"] == DealStatus.DECLINED
+    assert "payment_link_id" not in updates
 
 
 class FakeRazorpayInvoice:

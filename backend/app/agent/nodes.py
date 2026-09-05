@@ -63,7 +63,10 @@ def extract_intent(state: DealState, llm: LLMClient) -> dict:
     updates: dict = {}
     if extracted.item_name:
         updates["item_name"] = extracted.item_name
-    if extracted.qty is not None:
+    # A real order quantity is always positive — 0 (which the LLM sometimes
+    # returns instead of leaving qty blank when none was mentioned) is
+    # treated the same as "not provided", never as a literal zero-unit order.
+    if extracted.qty is not None and extracted.qty > 0:
         updates["qty"] = extracted.qty
     if extracted.hospital_name:
         updates["hospital_name"] = extracted.hospital_name
@@ -80,6 +83,13 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
     conflating the two used to show the merchant a scary "Out of stock"
     badge and reply "Sorry, we don't currently stock 'None'" for a plain
     greeting. This asks for the item instead of guessing or declining.
+
+    Likewise, a message that names an item but never a quantity (e.g. "do
+    you have skin staplers?") must ask for the quantity here rather than
+    reaching `negotiate`/`await_payment` with no real number — those nodes
+    used to silently treat a missing qty as "the buyer's asking about the
+    full stock," which could create a real ₹0 Razorpay payment link for
+    "0 x <item>" once `state.qty` (0/None) reached `await_payment`.
     """
     if not state.item_name:
         return {
@@ -87,7 +97,14 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
             "reply": "Hi! What product are you looking for, and how many units do you need?",
         }
 
-    requested_qty = state.qty or 0
+    if not state.qty:
+        return {
+            "item_name": state.item_name,
+            "status": DealStatus.EXTRACTING_INTENT,
+            "reply": f"Sure — how many units of {state.item_name} do you need?",
+        }
+
+    requested_qty = state.qty
     item = inventory.find(state.item_name)
     available_qty = item.stock_qty if item else 0
 
@@ -123,6 +140,10 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
     if item is None:
         return {"status": DealStatus.DECLINED, "reply": "Sorry, that item is no longer available."}
 
+    # check_inventory guarantees qty > 0 before this node ever runs; the
+    # full-stock fallback only matters for a direct unit-test call. Either
+    # way, persist the resolved qty below — await_payment must charge for
+    # the same quantity that was just quoted, never re-derive its own.
     qty = state.qty or item.stock_qty
     raw_price = compute_unit_price(item.base_price, qty)
     with traced_guardrail("price_bounds") as span:
@@ -149,6 +170,7 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
             reply = _safe_negotiation_reply(item.item_name, qty, unit_price, state)
 
     return {
+        "qty": qty,
         "unit_price": unit_price,
         "status": DealStatus.NEGOTIATING,
         "reply": reply,
@@ -175,9 +197,21 @@ def await_payment(state: DealState, razorpay: RazorpayClient) -> dict:
 
     `qty * unit_price` is computed here in Python (never by the LLM) and
     converted to paise, per PRD guardrail F/G3.
+
+    Last-line defense: never call Razorpay for a ₹0 link. `check_inventory`
+    already refuses to reach `negotiate` without a real qty, but this node
+    doesn't re-trust that — a zero/missing qty or price here declines
+    instead of creating a real, live ₹0 payment link.
     """
     qty = state.qty or 0
     unit_price = state.unit_price or 0.0
+
+    if qty <= 0 or unit_price <= 0:
+        return {
+            "status": DealStatus.DECLINED,
+            "reply": "Sorry, we couldn't confirm a quantity and price for this order — could you resend it?",
+        }
+
     amount_paise = round(qty * unit_price * 100)
 
     link = razorpay.create_payment_link(
