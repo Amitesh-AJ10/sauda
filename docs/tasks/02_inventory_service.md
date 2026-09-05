@@ -23,9 +23,9 @@ A deterministic source of truth for stock and pricing that the agent (and no one
 
 ## Acceptance Criteria
 
-- [ ] `GET /inventory` returns all rows as JSON matching `InventoryItem`.
-- [ ] `GET /inventory/{item_name}` returns `404` for an unknown item, `200` with the item otherwise.
-- [ ] `InventoryService.has_stock` correctly compares requested qty against `stock_qty`.
+- [x] `GET /inventory` returns all rows as JSON matching `InventoryItem`.
+- [x] `GET /inventory/{item_name}` returns `404` for an unknown item, `200` with the item otherwise.
+- [x] `InventoryService.has_stock` correctly compares requested qty against `stock_qty`.
 
 ## Tests
 
