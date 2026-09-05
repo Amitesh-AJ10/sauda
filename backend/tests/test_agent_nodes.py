@@ -136,7 +136,7 @@ def test_check_inventory_in_stock():
     inventory = make_inventory()
     state = DealState(item_name="Nitrile Examination Gloves (Box of 100)", qty=50)
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=FakeLLM())
 
     assert updates["status"] == DealStatus.CHECKING_INVENTORY
     assert updates["available_qty"] >= 50
@@ -146,7 +146,7 @@ def test_check_inventory_out_of_stock_short_circuits():
     inventory = make_inventory()
     state = DealState(item_name="Skin Stapler (Disposable)", qty=500)
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=FakeLLM())
 
     assert updates["status"] == DealStatus.OUT_OF_STOCK
     assert "95" in updates["reply"] or str(updates["available_qty"]) in updates["reply"]
@@ -157,7 +157,7 @@ def test_check_inventory_unknown_item_never_invents_stock():
     inventory = make_inventory()
     state = DealState(item_name="flux capacitor", qty=10)
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=FakeLLM())
 
     assert updates["status"] == DealStatus.OUT_OF_STOCK
     assert updates["available_qty"] == 0
@@ -167,32 +167,50 @@ def test_check_inventory_asks_for_the_item_when_none_was_mentioned():
     inventory = make_inventory()
     state = DealState(item_name=None, qty=None)
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=FakeLLM())
 
     assert updates["status"] == DealStatus.EXTRACTING_INTENT
     assert "what product" in updates["reply"].lower()
     assert "None" not in updates["reply"]
 
 
-def test_check_inventory_asks_for_qty_when_item_named_but_no_quantity_given():
-    # Regression: "do you have skin staplers?" used to fall through to
-    # negotiate/await_payment with qty=0/None, which could create a real
-    # ₹0 Razorpay payment link for "0 x Skin Stapler".
+def test_check_inventory_answers_a_spec_question_and_asks_for_qty():
+    # Regression: "what's the isopropyl percentage?" used to get a canned
+    # "how many units do you need?" repeated verbatim, never answering the
+    # actual question — and "do you have skin staplers?" used to fall
+    # through to negotiate/await_payment with qty=0/None, which could
+    # create a real ₹0 Razorpay payment link for "0 x Skin Stapler".
     inventory = make_inventory()
-    state = DealState(item_name="Skin Stapler (Disposable)", qty=None)
+    llm = FakeLLM(text="It's 70% isopropyl alcohol. How many units would you like?")
+    state = DealState(
+        item_name="Skin Stapler (Disposable)",
+        qty=None,
+        messages=["what's the isopropyl percentage in these?"],
+    )
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=llm)
 
     assert updates["status"] == DealStatus.EXTRACTING_INTENT
+    assert updates["reply"] == "It's 70% isopropyl alcohol. How many units would you like?"
+
+
+def test_check_inventory_qty_question_falls_back_to_notes_readout_on_guardrail_hit():
+    inventory = make_inventory()
+    llm = FakeLLM(text="We guarantee it's 70% isopropyl alcohol!")
+    state = DealState(item_name="Skin Stapler (Disposable)", qty=None, messages=["details?"])
+
+    updates = nodes.check_inventory(state, inventory=inventory, llm=llm)
+
+    assert updates["status"] == DealStatus.EXTRACTING_INTENT
+    assert "guarantee" not in updates["reply"].lower()
     assert "how many units" in updates["reply"].lower()
-    assert "0" not in updates["reply"]
 
 
 def test_check_inventory_zero_qty_is_treated_the_same_as_missing():
     inventory = make_inventory()
-    state = DealState(item_name="Skin Stapler (Disposable)", qty=0)
+    state = DealState(item_name="Skin Stapler (Disposable)", qty=0, messages=["do you have these?"])
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=FakeLLM(text="Yes. How many units?"))
 
     assert updates["status"] == DealStatus.EXTRACTING_INTENT
 
@@ -202,7 +220,7 @@ def test_check_inventory_asks_to_disambiguate_a_vague_item_name():
     inventory = make_inventory()
     state = DealState(item_name="Disposable Syringe", qty=10)
 
-    updates = nodes.check_inventory(state, inventory=inventory)
+    updates = nodes.check_inventory(state, inventory=inventory, llm=FakeLLM())
 
     assert updates["status"] == DealStatus.EXTRACTING_INTENT
     assert "5ml" in updates["reply"]

@@ -12,7 +12,7 @@ import httpx
 
 from app.agent.catalog import pack_size
 from app.agent.guardrails import check_prompt_injection, check_text_guardrails, clamp_price, compute_unit_price
-from app.agent.prompts import EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
+from app.agent.prompts import CLARIFICATION_INSTRUCTIONS, EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.observability.tracing import record_guardrail_result, traced_guardrail
 from app.services.inventory import InventoryService
@@ -121,8 +121,8 @@ def extract_intent(state: DealState, llm: LLMClient) -> dict:
     return updates
 
 
-def check_inventory(state: DealState, inventory: InventoryService) -> dict:
-    """Deterministic stock lookup. Never lets the LLM near this decision.
+def check_inventory(state: DealState, inventory: InventoryService, llm: LLMClient) -> dict:
+    """Deterministic stock lookup. Never lets the LLM near the item/stock/qty *decision*.
 
     A message that hasn't named a product yet (a bare "hi", or a question
     with no item in it) is a *missing-info* case, not an out-of-stock one —
@@ -130,16 +130,17 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
     badge and reply "Sorry, we don't currently stock 'None'" for a plain
     greeting. This asks for the item instead of guessing or declining.
 
-    Likewise, a message that names an item but never a quantity (e.g. "do
-    you have skin staplers?") must ask for the quantity here rather than
-    reaching `negotiate`/`await_payment` with no real number — those nodes
-    used to silently treat a missing qty as "the buyer's asking about the
-    full stock," which could create a real ₹0 Razorpay payment link for
-    "0 x <item>" once `state.qty` (0/None) reached `await_payment`.
-
-    And a genuinely ambiguous item name (e.g. "disposable syringe", which
+    A genuinely ambiguous item name (e.g. "disposable syringe", which
     matches both the 5ml and 10ml SKU) must ask which one rather than
     silently quoting whichever the lookup happened to match first.
+
+    Once the item is resolved but there's no quantity yet, the buyer is
+    often not just silent about qty — they're asking a real question
+    ("what's the isopropyl percentage in these?", "is it latex-free?").
+    That deserves a real answer grounded in the catalog's `notes` field
+    (Python supplies the facts, the LLM only phrases them — same
+    boundary as `negotiate`), not a canned "how many units?" repeated
+    forever no matter what was actually asked.
     """
     if not state.item_name:
         return {
@@ -147,14 +148,6 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
             "reply": "Hi! What product are you looking for, and how many units do you need?",
         }
 
-    if not state.qty:
-        return {
-            "item_name": state.item_name,
-            "status": DealStatus.EXTRACTING_INTENT,
-            "reply": f"Sure — how many units of {state.item_name} do you need?",
-        }
-
-    requested_qty = state.qty
     item, ambiguous_names = inventory.resolve(state.item_name)
 
     if item is None and ambiguous_names:
@@ -164,14 +157,24 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
             "reply": f"We carry a few options for '{state.item_name}': {options}. Which one would you like?",
         }
 
-    available_qty = item.stock_qty if item else 0
-
     if item is None:
         return {
             "available_qty": 0,
             "status": DealStatus.OUT_OF_STOCK,
             "reply": f"Sorry, we don't currently stock '{state.item_name}'.",
         }
+
+    if not state.qty:
+        reply = _answer_and_ask_for_qty(item, state, llm)
+        return {
+            "item_name": item.item_name,
+            "available_qty": item.stock_qty,
+            "status": DealStatus.EXTRACTING_INTENT,
+            "reply": reply,
+        }
+
+    requested_qty = state.qty
+    available_qty = item.stock_qty
 
     if available_qty < requested_qty:
         return {
@@ -190,6 +193,29 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
         "available_qty": available_qty,
         "status": DealStatus.CHECKING_INVENTORY,
     }
+
+
+def _answer_and_ask_for_qty(item, state: DealState, llm: LLMClient) -> str:
+    """LLM-phrased reply grounded only in the catalog's own facts (item name,
+    stock, `notes`) — answers whatever the buyer just asked (spec, availability,
+    etc.) and asks for a quantity. Falls back to a plain facts readout if the
+    LLM's phrasing trips a guardrail, same pattern as `negotiate`."""
+    last_message = state.messages[-1] if state.messages else ""
+    prompt = CLARIFICATION_INSTRUCTIONS.format(
+        item_name=item.item_name,
+        available_qty=item.stock_qty,
+        notes=item.notes,
+        message=last_message,
+    )
+    reply = llm.complete_text(SYSTEM_PROMPT, prompt)
+
+    with traced_guardrail("no_sla_promise") as span:
+        violations = check_text_guardrails(reply)
+        record_guardrail_result(span, passed=not violations, detail=", ".join(violations))
+        if violations:
+            reply = f"Here's what we have on file for {item.item_name}: {item.notes}. How many units would you like?"
+
+    return reply
 
 
 def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> dict:

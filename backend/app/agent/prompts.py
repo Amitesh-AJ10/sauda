@@ -42,6 +42,20 @@ Full conversation so far:
 Latest message: {message}"""
 
 
+CLARIFICATION_INSTRUCTIONS = """The buyer has asked about an item but hasn't said how many \
+units they need yet. If their latest message asks a real question about the item (specs, \
+composition, availability, etc.), answer it using ONLY the notes below — never invent a \
+spec that isn't listed, and say so plainly if the notes don't cover what they asked. Then \
+ask how many units they'd like. If their message wasn't really a question, just ask for \
+the quantity.
+
+Item: {item_name}
+Available quantity: {available_qty}
+Notes/specs on file: {notes}
+
+Buyer's latest message: {message}"""
+
+
 NEGOTIATION_INSTRUCTIONS = """Phrase a short WhatsApp reply to the buyer using ONLY these \
 approved facts. Do not invent numbers, delivery times, or guarantees; do not do any \
 arithmetic yourself — the price below is already final.

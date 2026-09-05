@@ -86,7 +86,7 @@ def build_graph(
     )
     builder.add_node(
         "check_inventory",
-        traced_node("check_inventory")(partial(nodes.check_inventory, inventory=inventory)),
+        traced_node("check_inventory")(partial(nodes.check_inventory, inventory=inventory, llm=llm)),
     )
     builder.add_node(
         "negotiate",
