@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { triggerDemo } from '../api'
 import type { DemoTriggerKind } from '../api'
 
-const BUTTONS: { kind: DemoTriggerKind; label: string; className: string }[] = [
-  { kind: 'whatsapp-lead', label: 'Trigger WhatsApp Lead', className: 'bg-emerald-500 hover:bg-emerald-400' },
-  { kind: 'guardrail-block', label: 'Trigger Guardrail Block', className: 'bg-sky-500 hover:bg-sky-400' },
-  { kind: 'razorpay-payment', label: 'Trigger Razorpay Webhook', className: 'bg-amber-400 hover:bg-amber-300' },
-  { kind: 'ai-buyer-purchase', label: 'AI-Buyer Purchase', className: 'bg-rose-500 hover:bg-rose-400' },
+const BUTTONS: { kind: DemoTriggerKind; label: string; accent: string }[] = [
+  { kind: 'whatsapp-lead', label: 'Trigger WhatsApp lead', accent: 'var(--color-mint-pop)' },
+  { kind: 'guardrail-block', label: 'Trigger guardrail block', accent: 'var(--color-electric-blue)' },
+  { kind: 'razorpay-payment', label: 'Trigger Razorpay webhook', accent: 'var(--color-sunburst)' },
+  { kind: 'ai-buyer-purchase', label: 'AI-buyer purchase', accent: 'var(--color-lavender)' },
 ]
 
 /** One-click backend triggers so a demo recording never needs a terminal alongside the browser. */
@@ -27,9 +27,9 @@ export function DemoControls() {
   }
 
   return (
-    <div className="w-60 rounded border-4 border-black bg-white p-2 font-pixel text-black shadow-[4px_4px_0_0_rgba(0,0,0,0.5)]">
-      <p className="mb-2 text-center text-[9px]">DEMO CONTROLS</p>
-      <div className="flex flex-col gap-1.5">
+    <div className="rounded-[20px] border border-black bg-white p-4">
+      <p className="mb-3 text-xs font-bold tracking-wide text-black/60 uppercase">Demo controls</p>
+      <div className="flex flex-col gap-2">
         {BUTTONS.map((btn) => (
           <button
             key={btn.kind}
@@ -37,14 +37,15 @@ export function DemoControls() {
             data-testid={`demo-trigger-${btn.kind}`}
             onClick={() => handleClick(btn.kind)}
             disabled={pending !== null}
-            className={`rounded border-2 border-black px-2 py-1.5 text-left text-[8px] leading-tight text-white transition disabled:opacity-50 ${btn.className}`}
+            className="rounded-full border border-black px-4 py-2 text-left text-sm font-bold disabled:opacity-50"
+            style={{ backgroundColor: btn.accent }}
           >
-            {pending === btn.kind ? 'SENDING…' : btn.label.toUpperCase()}
+            {pending === btn.kind ? 'Sending…' : btn.label}
           </button>
         ))}
       </div>
       {error && (
-        <p data-testid="demo-controls-error" className="mt-2 text-[8px] text-red-600">
+        <p data-testid="demo-controls-error" className="mt-3 text-sm font-bold text-red-700">
           {error}
         </p>
       )}

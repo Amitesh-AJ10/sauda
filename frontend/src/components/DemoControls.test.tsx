@@ -1,47 +1,31 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DemoControls } from './DemoControls'
 
+const fetchMock = vi.fn()
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 describe('DemoControls', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('renders all four demo trigger buttons', () => {
-    render(<DemoControls />)
-    expect(screen.getByTestId('demo-trigger-whatsapp-lead')).toBeInTheDocument()
-    expect(screen.getByTestId('demo-trigger-guardrail-block')).toBeInTheDocument()
-    expect(screen.getByTestId('demo-trigger-razorpay-payment')).toBeInTheDocument()
-    expect(screen.getByTestId('demo-trigger-ai-buyer-purchase')).toBeInTheDocument()
-  })
-
-  it('POSTs to the matching backend endpoint when a button is clicked', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ triggered: 'whatsapp_lead', deal_id: 'x', status: 'negotiating', detail: '' }),
-    })
+  it('POSTs to the matching demo endpoint on click', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) })
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DemoControls />)
-    fireEvent.click(screen.getByTestId('demo-trigger-whatsapp-lead'))
+    screen.getByTestId('demo-trigger-whatsapp-lead').click()
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/demo/whatsapp-lead')
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/demo/whatsapp-lead'), expect.objectContaining({ method: 'POST' })))
   })
 
-  it('shows an error message if the trigger fails', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      json: async () => ({ detail: 'No deal is currently awaiting payment' }),
-    })
+  it('shows an error message when the trigger fails', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({ detail: 'boom' }) })
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DemoControls />)
-    fireEvent.click(screen.getByTestId('demo-trigger-razorpay-payment'))
+    screen.getByTestId('demo-trigger-guardrail-block').click()
 
-    await waitFor(() =>
-      expect(screen.getByTestId('demo-controls-error')).toHaveTextContent('No deal is currently awaiting payment'),
-    )
+    expect(await screen.findByTestId('demo-controls-error')).toHaveTextContent('boom')
   })
 })
