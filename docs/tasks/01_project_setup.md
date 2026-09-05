@@ -10,7 +10,7 @@ Stand up a minimal, structured repo skeleton so every later task has a place to 
 
 - `backend/` — Python (FastAPI) project.
   - `app/main.py` with a single `GET /health` endpoint.
-  - `requirements.txt` (or `pyproject.toml`) pinning: `fastapi`, `uvicorn`, `pydantic`.
+  - `pyproject.toml` (managed via `uv`) pinning: `fastapi`, `uvicorn`, `pydantic`.
   - `.env.example` listing expected env vars (empty placeholders): `GROQ_API_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `PHOENIX_COLLECTOR_ENDPOINT`.
   - `.gitignore` for Python (`.venv/`, `__pycache__/`, `.env`).
 - `frontend/` — Vite + React + TypeScript + Tailwind scaffold (via `npm create vite@latest`).
@@ -27,7 +27,7 @@ Stand up a minimal, structured repo skeleton so every later task has a place to 
 
 ## Acceptance Criteria
 
-- [ ] `cd backend && uvicorn app.main:app --reload` serves `GET /health` → `{"status": "ok"}`.
+- [ ] `cd backend && uv run uvicorn app.main:app --reload` serves `GET /health` → `{"status": "ok"}`.
 - [ ] `cd frontend && npm run dev` serves the default Vite app with Tailwind classes rendering (verify one styled element).
 - [ ] Root README's "Getting Started" instructions work as written on a clean clone.
 

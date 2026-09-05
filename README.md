@@ -32,22 +32,22 @@ docs/
 
 ## Getting started
 
-> Scaffolding lands in [docs/tasks/01_project_setup.md](docs/tasks/01_project_setup.md). Until that task is complete, `backend/` and `frontend/` don't exist yet.
-
-Once scaffolded:
+Requires [`uv`](https://docs.astral.sh/uv/) for the backend and Node.js 20+ for the frontend.
 
 ```bash
 # Backend
 cd backend
 cp .env.example .env   # fill in real keys
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+uv sync
+uv run uvicorn app.main:app --reload
 
 # Frontend
 cd frontend
 npm install
 npm run dev
 ```
+
+Or, from the repo root: `make backend`, `make frontend`, `make test-backend`.
 
 ## Status
 

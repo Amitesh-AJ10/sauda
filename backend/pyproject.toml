@@ -1,0 +1,16 @@
+[project]
+name = "sauda-backend"
+version = "0.1.0"
+description = "Sauda backend: FastAPI + LangGraph agent"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141.1",
+    "pydantic>=2",
+    "uvicorn>=0.52.4",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
