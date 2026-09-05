@@ -80,21 +80,96 @@ def test_is_payment_claim_rejects_unrelated_messages():
         assert not nodes.is_payment_claim(text), text
 
 
+def test_extract_proposed_price_recognizes_common_phrasings():
+    assert nodes.extract_proposed_price("can you do it at 600 rupees per unit?") == 600.0
+    assert nodes.extract_proposed_price("what about INR 500?") == 500.0
+    assert nodes.extract_proposed_price("₹450 per unit works for us") == 450.0
+
+
+def test_extract_proposed_price_ignores_messages_with_no_price():
+    assert nodes.extract_proposed_price("is the price negotiable?") is None
+    assert nodes.extract_proposed_price("need 30 units") is None
+
+
 def test_interpret_reply_confirms_only_while_negotiating():
     state = DealState(status=DealStatus.NEGOTIATING, messages=["yes, go ahead"])
-    assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": True, "handled": False}
+    assert nodes.interpret_reply(state, inventory=make_inventory(), llm=FakeLLM()) == {
+        "just_confirmed": True,
+        "handled": False,
+    }
 
 
 def test_interpret_reply_does_not_confirm_a_non_affirmative_reply():
     state = DealState(status=DealStatus.NEGOTIATING, messages=["can you do a better price?"])
-    assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": False, "handled": False}
+    assert nodes.interpret_reply(state, inventory=make_inventory(), llm=FakeLLM()) == {
+        "just_confirmed": False,
+        "handled": False,
+    }
 
 
 def test_interpret_reply_ignores_an_affirmative_word_outside_negotiating():
     # "yes" from a buyer who hasn't been quoted a price yet must not
     # accidentally short-circuit straight to await_payment.
     state = DealState(status=DealStatus.EXTRACTING_INTENT, messages=["yes"])
-    assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": False, "handled": False}
+    assert nodes.interpret_reply(state, inventory=make_inventory(), llm=FakeLLM()) == {
+        "just_confirmed": False,
+        "handled": False,
+    }
+
+
+def test_interpret_reply_a_counter_offer_is_never_mistaken_for_a_confirmation():
+    # Regression: "can you do it at 600 rupees per unit?" contains the
+    # substring "do it" and used to be misread as a plain confirmation,
+    # skipping straight to a real payment link at the *old* price while
+    # completely ignoring the counter-offer.
+    state = DealState(
+        status=DealStatus.NEGOTIATING,
+        item_name="Pulse Oximeter",
+        qty=50,
+        unit_price=630.5,
+        messages=["then can you do it at 600 rupees per unit?"],
+    )
+
+    updates = nodes.interpret_reply(state, inventory=make_inventory(), llm=FakeLLM())
+
+    assert updates["just_confirmed"] is False
+
+
+def test_interpret_reply_accepts_a_counter_offer_within_the_approved_band():
+    # Pulse Oximeter base_price=650, floor is 650*0.9=585 — 600 is between
+    # the floor and the current tiered price (630.5), so it should be
+    # accepted outright, not ignored and not rejected.
+    state = DealState(
+        status=DealStatus.NEGOTIATING,
+        item_name="Pulse Oximeter",
+        qty=50,
+        unit_price=630.5,
+        messages=["then can you do it at 600 rupees per unit?"],
+    )
+
+    updates = nodes.interpret_reply(state, inventory=make_inventory(), llm=FakeLLM())
+
+    assert updates["handled"] is True
+    assert updates["just_confirmed"] is False
+    assert updates["unit_price"] == 600.0
+    assert "600" in updates["reply"]
+
+
+def test_interpret_reply_rejects_a_counter_offer_below_the_floor():
+    state = DealState(
+        status=DealStatus.NEGOTIATING,
+        item_name="Pulse Oximeter",
+        qty=50,
+        unit_price=630.5,
+        messages=["can you do 500 rupees per unit?"],
+    )
+
+    updates = nodes.interpret_reply(state, inventory=make_inventory(), llm=FakeLLM())
+
+    assert updates["handled"] is True
+    assert "unit_price" not in updates
+    assert "585" in updates["reply"]
+    assert "630.5" in updates["reply"]
 
 
 def test_interpret_reply_handles_a_decline_instead_of_re_quoting():
@@ -110,7 +185,7 @@ def test_interpret_reply_handles_a_decline_instead_of_re_quoting():
         messages=["no"],
     )
 
-    updates = nodes.interpret_reply(state, llm=llm)
+    updates = nodes.interpret_reply(state, inventory=make_inventory(), llm=llm)
 
     assert updates == {
         "reply": "No worries — what would you like to change?",
@@ -123,7 +198,7 @@ def test_interpret_reply_decline_falls_back_on_guardrail_hit():
     llm = FakeLLM(text="We guarantee a better deal next time!")
     state = DealState(status=DealStatus.NEGOTIATING, item_name="X", qty=1, unit_price=1.0, messages=["no"])
 
-    updates = nodes.interpret_reply(state, llm=llm)
+    updates = nodes.interpret_reply(state, inventory=make_inventory(), llm=llm)
 
     assert updates["handled"] is True
     assert "guarantee" not in updates["reply"].lower()

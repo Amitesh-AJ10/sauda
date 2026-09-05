@@ -26,6 +26,7 @@ from app.agent.prompts import (
     SYSTEM_PROMPT,
 )
 from app.agent.state import DealState, DealStatus, ExtractedIntent
+from app.models.inventory import InventoryItem
 from app.observability.tracing import record_guardrail_result, traced_guardrail
 from app.services.inventory import InventoryService
 from app.services.llm import LLMClient
@@ -34,12 +35,34 @@ from app.services.razorpay_client import RazorpayClient
 # Deterministic confirmation detector — only an explicit affirmative reply
 # while a price is on the table is ever allowed to trigger a real Razorpay
 # payment link. See `interpret_reply` below.
+#
+# Deliberately NOT included: a bare "do it" — "can you do it at 600 rupees
+# per unit?" contains that exact substring while being a counter-offer,
+# not an agreement, and used to be misread as one (a real, live bug: it
+# skipped straight to a payment link at the *old* price). "let's do it" is
+# kept since that phrase alone is a genuine, unambiguous commitment.
 _CONFIRMATION_PATTERN = re.compile(
     r"\b(yes|yeah|yep|yup|sure|ok|okay|confirm(ed)?|go\s*ahead|sounds?\s*good|"
     r"please\s*send|send\s*it|that\s*works|proceed|book\s*it|place\s*the\s*order|"
-    r"do\s*it|alright|good\s*to\s*go|let'?s\s*do\s*it)\b",
+    r"alright|good\s*to\s*go|let'?s\s*do\s*it)\b",
     re.IGNORECASE,
 )
+
+# Deterministic counter-offer price extractor — pulls a number the buyer
+# names as a price ("600 rupees per unit", "INR 600", "₹600/unit") so
+# Python (never the LLM) can decide whether it's within the approved band.
+_PROPOSED_PRICE_PATTERN = re.compile(
+    r"(?:inr|rs\.?|₹)\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:inr|rs\.?|rupees?|₹|"
+    r"(?:per\s*(?:unit|box|piece)))",
+    re.IGNORECASE,
+)
+
+
+def extract_proposed_price(text: str) -> float | None:
+    match = _PROPOSED_PRICE_PATTERN.search(text)
+    if not match:
+        return None
+    return float(match.group(1) or match.group(2))
 
 
 # Deterministic decline detector — "no" to the payment-link question must
@@ -74,7 +97,7 @@ def is_payment_claim(text: str) -> bool:
     return bool(_PAYMENT_CLAIM_PATTERN.search(text))
 
 
-def interpret_reply(state: DealState, llm: LLMClient) -> dict:
+def interpret_reply(state: DealState, inventory: InventoryService, llm: LLMClient) -> dict:
     """Deterministic gate between a proposed price and a real payment link.
 
     Only an explicit affirmative reply while the deal is sitting at
@@ -85,8 +108,17 @@ def interpret_reply(state: DealState, llm: LLMClient) -> dict:
     An explicit decline ("no", "not now", ...) is handled right here too
     — and ends the turn (`handled`) instead of falling through to
     extract_intent/negotiate, which would just re-run the identical price
-    quote verbatim. Anything else (a question, a counter-offer, a
-    correction) falls through to keep negotiating.
+    quote verbatim.
+
+    A counter-offer naming a specific price ("can you do 600 rupees per
+    unit?") is also handled right here, deterministically: Python (never
+    the LLM) checks it against the real approved price band and either
+    accepts it outright or holds at the current price and states the real
+    floor — this is real negotiation, not a canned reply, but the
+    accept/reject decision itself is never left to free text.
+
+    Anything else (a question, an item/quantity correction) falls through
+    to keep negotiating via extract_intent.
     """
     if state.status != DealStatus.NEGOTIATING or not state.messages:
         return {"just_confirmed": False, "handled": False}
@@ -108,7 +140,38 @@ def interpret_reply(state: DealState, llm: LLMClient) -> dict:
                 reply = "No problem — what would you like to change: the item, the quantity, or something else?"
         return {"reply": reply, "just_confirmed": False, "handled": True}
 
+    proposed_price = extract_proposed_price(last_message)
+    if proposed_price is not None and state.item_name:
+        item, _ = inventory.resolve(state.item_name)
+        if item is not None:
+            return _handle_price_counter_offer(state, item, proposed_price)
+
     return {"just_confirmed": False, "handled": False}
+
+
+def _handle_price_counter_offer(state: DealState, item: InventoryItem, proposed_price: float) -> dict:
+    """Accept a counter-offer if it's within the real approved band, else hold
+    at the current price and state the real floor — decided entirely by
+    Python (`price_band`), never by the LLM's own judgment of what's fair."""
+    min_price, max_price = price_band(item.base_price)
+
+    if proposed_price < min_price:
+        reply = (
+            f"Sorry, INR {proposed_price} is below the lowest we can go for {item.item_name} "
+            f"(floor: INR {min_price}). The best rate we can offer is INR {state.unit_price} per unit — "
+            "shall I send the payment link at that rate, or would you like to adjust the quantity instead?"
+        )
+        return {"reply": reply, "just_confirmed": False, "handled": True}
+
+    accepted_price = round(min(proposed_price, max_price), 2)
+    reply = f"Deal — INR {accepted_price} per unit works for {item.item_name}. Shall I go ahead and send the payment link at that rate?"
+    return {
+        "unit_price": accepted_price,
+        "status": DealStatus.NEGOTIATING,
+        "reply": reply,
+        "just_confirmed": False,
+        "handled": True,
+    }
 
 
 def guard_input(state: DealState) -> dict:
@@ -308,14 +371,13 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
             span, passed=not clamped, detail=f"proposed {raw_price} -> clamped to {unit_price}"
         )
 
-    min_price, max_price = price_band(item.base_price)
+    min_price, _ = price_band(item.base_price)
     prompt = NEGOTIATION_INSTRUCTIONS.format(
         item_name=item.item_name,
         available_qty=item.stock_qty,
         qty=qty,
         unit_price=unit_price,
         min_price=min_price,
-        max_price=max_price,
         hospital_name=state.hospital_name or "not provided yet",
         pin_code=state.pin_code or "not provided yet",
         buyer_message=state.messages[-1] if state.messages else "",

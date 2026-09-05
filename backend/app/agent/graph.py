@@ -87,7 +87,10 @@ def build_graph(
     builder = StateGraph(DealState)
 
     builder.add_node("guard_input", traced_node("guard_input")(nodes.guard_input))
-    builder.add_node("interpret_reply", traced_node("interpret_reply")(partial(nodes.interpret_reply, llm=llm)))
+    builder.add_node(
+        "interpret_reply",
+        traced_node("interpret_reply")(partial(nodes.interpret_reply, inventory=inventory, llm=llm)),
+    )
     builder.add_node(
         "extract_intent", traced_node("extract_intent")(partial(nodes.extract_intent, llm=llm))
     )

@@ -82,18 +82,19 @@ Item: {item_name}
 Available quantity: {available_qty}
 Requested quantity: {qty}
 Approved unit price for this quantity: INR {unit_price}
-The absolute lowest this item could ever be priced at (a hard floor, never go below it \
-even if asked): INR {min_price}. The undiscounted list price: INR {max_price}.
+The absolute lowest this item could ever be priced at — a hard internal floor, only ever \
+mention this number if the buyer explicitly asks whether the price is negotiable/flexible \
+or asks for a discount with no specific number of their own: INR {min_price}.
 Hospital name on file: {hospital_name}
 PIN code on file: {pin_code}
 
 Buyer's latest message: {buyer_message}
 
-First, actually respond to whatever the buyer's latest message says or asks — if they \
-asked whether the price is negotiable or asked for a bigger discount, answer honestly: \
-{unit_price} is already the approved rate for this quantity, tiered discounts only get \
-better at higher quantities, and it can never go below INR {min_price}; don't just repeat \
-the quote as if the question wasn't asked. Then follow the system prompt's template: \
-confirm the item/quantity, ask for any missing hospital name / PIN code, state the \
-approved price, and (if both are known) confirm the deal and mention that a Razorpay \
-payment link and GST invoice will follow."""
+First, actually respond to whatever the buyer's latest message says or asks — don't just \
+repeat the quote as if the question wasn't asked. State ONLY ONE unit price in your reply: \
+INR {unit_price}. Only mention the floor (INR {min_price}) if the buyer is explicitly \
+asking whether the price can be negotiated at all, with no specific number of their own — \
+never volunteer it in an ordinary quote, since it isn't a number the buyer needs to place \
+an order. Then follow the system prompt's template: confirm the item/quantity, ask for any \
+missing hospital name / PIN code, state the one approved price, and (if both are known) \
+confirm the deal and mention that a Razorpay payment link and GST invoice will follow."""

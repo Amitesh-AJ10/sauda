@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { sendChatMessage } from '../api'
 import { ChatBubble } from '../components/ChatBubble'
 import { ChatComposer } from '../components/ChatComposer'
 import { HospitalAvatar } from '../components/HospitalAvatar'
 import { STATUS_LABEL } from '../lib/status'
-import { doodleBackgroundImage, whatsapp } from '../lib/whatsappTheme'
+import { chatThreadBackground, whatsapp } from '../lib/whatsappTheme'
 import { useDeals } from '../hooks/useDeals'
 
 interface Turn {
@@ -32,6 +32,15 @@ export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: Hospita
   const [seeded, setSeeded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const deals = useDeals()
+  const threadEndRef = useRef<HTMLDivElement>(null)
+
+  // Keep the newest message in view — the thread pane scrolls internally
+  // (see the fixed h-svh layout below); without this, each new turn just
+  // grows the page instead of the visible window snapping to the bottom.
+  useEffect(() => {
+    // jsdom (test environment) doesn't implement scrollIntoView.
+    threadEndRef.current?.scrollIntoView?.({ block: 'end' })
+  }, [turns])
 
   const deal = deals.find((candidate) => candidate.id === hospitalId) ?? null
 
@@ -72,7 +81,7 @@ export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: Hospita
   }
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-md flex-col">
+    <div className="mx-auto flex h-svh max-w-md flex-col">
       <div
         className="flex items-center justify-between gap-2 border-b px-4 py-3"
         style={{ backgroundColor: whatsapp.paperWhite, borderColor: whatsapp.paleBlueWash }}
@@ -104,11 +113,7 @@ export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: Hospita
       <div
         data-testid="chat-thread"
         className="flex-1 space-y-2 overflow-y-auto p-4"
-        style={{
-          backgroundColor: whatsapp.creamCanvas,
-          backgroundImage: doodleBackgroundImage,
-          backgroundSize: '140px 140px',
-        }}
+        style={{ backgroundColor: whatsapp.creamCanvas, ...chatThreadBackground }}
       >
         {turns.length === 0 && (
           <p className="text-center text-sm" style={{ color: whatsapp.warmGray }}>
@@ -125,6 +130,7 @@ export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: Hospita
             invoiceUrl={turn.invoiceUrl}
           />
         ))}
+        <div ref={threadEndRef} />
       </div>
 
       {error && (
