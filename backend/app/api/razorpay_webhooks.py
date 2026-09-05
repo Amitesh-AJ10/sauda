@@ -13,6 +13,7 @@ notification; an agent order is expected to poll `GET /api/v1/orders/{id}`
 instead.
 """
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,6 +26,8 @@ from app.observability.tracing import traced_node
 from app.services.razorpay_client import RazorpayClient, get_razorpay_client, verify_webhook_signature
 from app.services.whatsapp import WhatsAppService, get_whatsapp_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -35,6 +38,41 @@ def _find_by_payment_link_id(
         if state.payment_link_id == payment_link_id:
             return key, state
     return None
+
+
+def finalize_payment(
+    key: str,
+    state: DealState,
+    store: dict[str, DealState],
+    is_whatsapp_deal: bool,
+    razorpay: RazorpayClient,
+    whatsapp: WhatsAppService,
+) -> DealState:
+    """Paid -> invoice issued -> dispatched, and (for a WhatsApp deal) notify the buyer.
+
+    Shared by the real `payment_link.paid` webhook above and by the demo
+    "Trigger Razorpay Webhook" control (`app/api/demo.py`) — same effect,
+    the demo control just skips signature verification and payload lookup.
+    """
+    if state.status == DealStatus.DISPATCHED:
+        return state  # already processed — idempotent no-op on replay
+
+    paid_state = state.model_copy(update={"status": DealStatus.PAID})
+    updates = traced_node("issue_invoice")(nodes.issue_invoice)(paid_state, razorpay=razorpay)
+    final_state = paid_state.model_copy(update=updates)
+    store[key] = final_state
+
+    if is_whatsapp_deal and final_state.status == DealStatus.DISPATCHED and final_state.reply:
+        try:
+            whatsapp.send_message(key, final_state.reply)
+        except Exception:
+            # Same rationale as app/api/whatsapp.py: a delivery failure (no
+            # real WhatsApp Cloud API creds in this environment) shouldn't
+            # fail the payment finalization that already succeeded — the
+            # invoice is issued and the deal is dispatched either way.
+            logger.exception("Failed to deliver WhatsApp invoice notice to %s", key)
+
+    return final_state
 
 
 @router.post("/webhooks/razorpay")
@@ -71,16 +109,7 @@ async def receive_webhook(
         return {"status": "ignored"}
 
     key, state = match
-    if state.status == DealStatus.DISPATCHED:
-        return {"status": "ok"}  # already processed — idempotent no-op on replay
-
-    paid_state = state.model_copy(update={"status": DealStatus.PAID})
-    updates = traced_node("issue_invoice")(nodes.issue_invoice)(paid_state, razorpay=razorpay)
-    final_state = paid_state.model_copy(update=updates)
-    store[key] = final_state
-
-    is_whatsapp_deal = store is conversations
-    if is_whatsapp_deal and final_state.status == DealStatus.DISPATCHED and final_state.reply:
-        whatsapp.send_message(key, final_state.reply)
-
+    finalize_payment(
+        key, state, store, is_whatsapp_deal=store is conversations, razorpay=razorpay, whatsapp=whatsapp
+    )
     return {"status": "ok"}

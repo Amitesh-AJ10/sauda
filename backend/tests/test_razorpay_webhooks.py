@@ -171,3 +171,29 @@ def test_invoice_failure_does_not_mark_deal_dispatched(monkeypatch):
     assert deal.invoice_url is None
     # buyer is never told the order shipped when the invoice call failed
     assert fake_whatsapp.sent == []
+
+
+class RaisingWhatsAppService:
+    def send_message(self, to: str, text: str) -> dict:
+        raise RuntimeError("no real WhatsApp creds in this environment")
+
+
+def test_delivery_failure_does_not_fail_the_webhook_or_undo_the_dispatch(monkeypatch):
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", SECRET)
+    conversations = {
+        "911234567890": DealState(status=DealStatus.AWAITING_PAYMENT, payment_link_id="plink_ABC123")
+    }
+    fake_razorpay = FakeRazorpay()
+    app.dependency_overrides[get_conversations] = lambda: conversations
+    app.dependency_overrides[get_razorpay_client] = lambda: fake_razorpay
+    app.dependency_overrides[get_whatsapp_service] = lambda: RaisingWhatsAppService()
+
+    body = paid_event("plink_ABC123")
+    response = client.post(
+        "/webhooks/razorpay", content=body, headers={"X-Razorpay-Signature": sign(body)}
+    )
+
+    assert response.status_code == 200
+    deal = conversations["911234567890"]
+    assert deal.status == DealStatus.DISPATCHED
+    assert deal.invoice_url == "https://rzp.io/i/invfake123"

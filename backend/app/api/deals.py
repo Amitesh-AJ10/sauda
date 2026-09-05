@@ -9,7 +9,7 @@ lead/payment indicators.
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.state import DealState, DealStatus
 from app.api.whatsapp import get_conversations
@@ -25,6 +25,9 @@ class DealSummary(BaseModel):
     status: DealStatus
     payment_link_url: str | None = None
     invoice_url: str | None = None
+    messages: list[str] = Field(default_factory=list)
+    reply: str | None = None
+    guardrail_violations: list[str] = Field(default_factory=list)
 
 
 @router.get("/deals", response_model=list[DealSummary])
@@ -38,6 +41,9 @@ def list_deals(conversations: dict[str, DealState] = Depends(get_conversations))
             status=state.status,
             payment_link_url=state.payment_link_url,
             invoice_url=state.invoice_url,
+            messages=state.messages,
+            reply=state.reply,
+            guardrail_violations=state.guardrail_violations,
         )
         for sender, state in conversations.items()
     ]

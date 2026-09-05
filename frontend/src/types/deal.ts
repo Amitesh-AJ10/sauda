@@ -19,6 +19,9 @@ export interface Deal {
   status: DealStatus
   payment_link_url: string | null
   invoice_url: string | null
+  messages: string[]
+  reply: string | null
+  guardrail_violations: string[]
 }
 
 const LEAD_STATUSES: DealStatus[] = ['extracting_intent', 'checking_inventory', 'negotiating']

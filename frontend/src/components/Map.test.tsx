@@ -12,6 +12,9 @@ function makeDeal(overrides: Partial<Deal>): Deal {
     status: 'negotiating',
     payment_link_url: null,
     invoice_url: null,
+    messages: [],
+    reply: null,
+    guardrail_violations: [],
     ...overrides,
   }
 }
@@ -19,13 +22,13 @@ function makeDeal(overrides: Partial<Deal>): Deal {
 describe('Map', () => {
   it('renders the Hospital/Godown layout without crashing given a mocked deals list', () => {
     render(<Map deals={[makeDeal({})]} />)
-    expect(screen.getByText('Hospital')).toBeInTheDocument()
-    expect(screen.getByText('Godown')).toBeInTheDocument()
+    expect(screen.getByText('HOSPITAL')).toBeInTheDocument()
+    expect(screen.getByText('SAUDA HQ')).toBeInTheDocument()
   })
 
   it('renders with no deals at all', () => {
     render(<Map deals={[]} />)
-    expect(screen.getByText('Hospital')).toBeInTheDocument()
+    expect(screen.getByText('HOSPITAL')).toBeInTheDocument()
     expect(screen.queryByTestId('lead-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('payment-indicator')).not.toBeInTheDocument()
   })
@@ -70,5 +73,30 @@ describe('Map', () => {
     // Simulate the next poll returning the same still-dispatched deal.
     rerender(<Map deals={[{ ...deal }]} />)
     expect(screen.getAllByTestId('dispatch-sprite')).toHaveLength(1)
+  })
+
+  it('shows a guardrail alert once a deal has a guardrail violation', () => {
+    render(<Map deals={[makeDeal({ guardrail_violations: ['\\bguarantee[sd]?\\b'] })]} />)
+    expect(screen.getByTestId('guardrail-alert')).toBeInTheDocument()
+  })
+
+  it('shows the dialogue box with the most recent deal\'s last message', () => {
+    render(
+      <Map
+        deals={[
+          makeDeal({ id: 'a', messages: ['first buyer message'] }),
+          makeDeal({ id: 'b', messages: ['Need 500 masks, best price?'] }),
+        ]}
+      />,
+    )
+    expect(screen.getByTestId('dialogue-box')).toHaveTextContent('Need 500 masks, best price?')
+  })
+
+  it('renders the demo controls panel', () => {
+    render(<Map deals={[]} />)
+    expect(screen.getByTestId('demo-trigger-whatsapp-lead')).toBeInTheDocument()
+    expect(screen.getByTestId('demo-trigger-guardrail-block')).toBeInTheDocument()
+    expect(screen.getByTestId('demo-trigger-razorpay-payment')).toBeInTheDocument()
+    expect(screen.getByTestId('demo-trigger-ai-buyer-purchase')).toBeInTheDocument()
   })
 })
