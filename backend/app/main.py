@@ -1,7 +1,13 @@
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+
+# Load backend/.env into the process before anything below reads os.environ.
+# Real env vars (e.g. set in CI or a deploy) always win — load_dotenv never
+# overrides a var that's already set.
+load_dotenv()
 
 from app.api.agent_commerce import router as agent_commerce_router
 from app.api.razorpay_webhooks import router as razorpay_router
