@@ -16,10 +16,15 @@ export function DispatchSprite({ laneOffset = 0 }: DispatchSpriteProps) {
       initial={{ left: '100%' }}
       animate={{ left: '0%' }}
       transition={{ duration: DISPATCH_ANIMATION_SECONDS, ease: 'linear' }}
-      className="pointer-events-none absolute -translate-x-1/2 select-none text-2xl"
+      className="pointer-events-none absolute -translate-x-1/2 select-none"
       style={{ top: laneOffset }}
     >
-      🛵
+      <img
+        src="/assets/sprites/dispatch-driver.png"
+        alt=""
+        className="h-8 w-8"
+        style={{ imageRendering: 'pixelated' }}
+      />
     </motion.div>
   )
 }
