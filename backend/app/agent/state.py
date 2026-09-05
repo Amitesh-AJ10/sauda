@@ -55,7 +55,8 @@ class DealState(BaseModel):
 
     guardrail_violations: list[str] = Field(default_factory=list)
 
-    # Transient one-turn routing signal, set by `interpret_reply` and read
+    # Transient one-turn routing signals, set by `interpret_reply` and read
     # by the graph's edge function right after — never meant to be read
     # once the turn finishes. Not part of any API response model.
     just_confirmed: bool = False
+    handled: bool = False

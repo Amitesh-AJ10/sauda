@@ -60,21 +60,64 @@ def test_is_confirmation_rejects_a_question_or_counter_offer():
         assert not nodes.is_confirmation(text), text
 
 
+def test_is_decline_recognizes_common_negatives():
+    for text in ["no", "nope", "not now", "hold on", "actually no", "don't send it yet"]:
+        assert nodes.is_decline(text), text
+
+
+def test_is_decline_rejects_a_confirmation_or_unrelated_message():
+    for text in ["yes", "sounds good", "need 30 units"]:
+        assert not nodes.is_decline(text), text
+
+
 def test_interpret_reply_confirms_only_while_negotiating():
     state = DealState(status=DealStatus.NEGOTIATING, messages=["yes, go ahead"])
-    assert nodes.interpret_reply(state) == {"just_confirmed": True}
+    assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": True, "handled": False}
 
 
 def test_interpret_reply_does_not_confirm_a_non_affirmative_reply():
     state = DealState(status=DealStatus.NEGOTIATING, messages=["can you do a better price?"])
-    assert nodes.interpret_reply(state) == {"just_confirmed": False}
+    assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": False, "handled": False}
 
 
 def test_interpret_reply_ignores_an_affirmative_word_outside_negotiating():
     # "yes" from a buyer who hasn't been quoted a price yet must not
     # accidentally short-circuit straight to await_payment.
     state = DealState(status=DealStatus.EXTRACTING_INTENT, messages=["yes"])
-    assert nodes.interpret_reply(state) == {"just_confirmed": False}
+    assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": False, "handled": False}
+
+
+def test_interpret_reply_handles_a_decline_instead_of_re_quoting():
+    # Regression: saying "no" to the payment-link question used to fall
+    # through to negotiate again, which re-ran the exact same price quote
+    # verbatim instead of acknowledging the decline.
+    llm = FakeLLM(text="No worries — what would you like to change?")
+    state = DealState(
+        status=DealStatus.NEGOTIATING,
+        item_name="Alcohol Swabs (Box of 100)",
+        qty=50,
+        unit_price=58.2,
+        messages=["no"],
+    )
+
+    updates = nodes.interpret_reply(state, llm=llm)
+
+    assert updates == {
+        "reply": "No worries — what would you like to change?",
+        "just_confirmed": False,
+        "handled": True,
+    }
+
+
+def test_interpret_reply_decline_falls_back_on_guardrail_hit():
+    llm = FakeLLM(text="We guarantee a better deal next time!")
+    state = DealState(status=DealStatus.NEGOTIATING, item_name="X", qty=1, unit_price=1.0, messages=["no"])
+
+    updates = nodes.interpret_reply(state, llm=llm)
+
+    assert updates["handled"] is True
+    assert "guarantee" not in updates["reply"].lower()
+    assert "what would you like to change" in updates["reply"].lower()
 
 
 # --- extract_intent -----------------------------------------------------
@@ -192,6 +235,27 @@ def test_check_inventory_answers_a_spec_question_and_asks_for_qty():
 
     assert updates["status"] == DealStatus.EXTRACTING_INTENT
     assert updates["reply"] == "It's 70% isopropyl alcohol. How many units would you like?"
+
+
+def test_check_inventory_passes_the_real_pack_size_to_the_clarification_prompt():
+    # Regression: a buyer asking about a pack size that doesn't exist ("box
+    # of 50" when only box of 100 exists) needs the real pack size as a
+    # ground-truth fact so the LLM can correctly say no, rather than a
+    # prompt that never mentioned pack size at all.
+    inventory = make_inventory()
+    captured: dict = {}
+
+    class CapturingLLM:
+        def complete_text(self, system, user):
+            captured["prompt"] = user
+            return "We only have boxes of 100 — would you like that instead?"
+
+    state = DealState(item_name="Alcohol Swabs", qty=None, messages=["do you have a box of 50 instead?"])
+
+    updates = nodes.check_inventory(state, inventory=inventory, llm=CapturingLLM())
+
+    assert "boxes of 100" in captured["prompt"]
+    assert updates["reply"] == "We only have boxes of 100 — would you like that instead?"
 
 
 def test_check_inventory_qty_question_falls_back_to_notes_readout_on_guardrail_hit():

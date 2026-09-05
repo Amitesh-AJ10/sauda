@@ -14,7 +14,10 @@ affirmative reply while the deal is `NEGOTIATING` (a price was just
 proposed) is the one and only thing that creates a real Razorpay payment
 link. Item + quantity + price alone are never enough — negotiate always
 stops and asks "shall I send the payment link?" instead of proceeding on
-its own, however complete the order looks.
+its own, however complete the order looks. An explicit decline ("no",
+"not now") also ends the turn right there (`handled`) with a reply
+asking what to change, instead of falling through to negotiate again
+and re-quoting the exact same offer verbatim.
 
 Anything else re-enters extract_intent -> check_inventory -> negotiate, so
 a clarifying answer ("10ml"), a correction ("actually make it 20"), or a
@@ -49,7 +52,11 @@ def _after_guard_input(state: DealState) -> str:
 
 
 def _after_interpret_reply(state: DealState) -> str:
-    return "await_payment" if state.just_confirmed else "extract_intent"
+    if state.just_confirmed:
+        return "await_payment"
+    if state.handled:
+        return END
+    return "extract_intent"
 
 
 def _after_check_inventory(state: DealState) -> str:
@@ -80,7 +87,7 @@ def build_graph(
     builder = StateGraph(DealState)
 
     builder.add_node("guard_input", traced_node("guard_input")(nodes.guard_input))
-    builder.add_node("interpret_reply", traced_node("interpret_reply")(nodes.interpret_reply))
+    builder.add_node("interpret_reply", traced_node("interpret_reply")(partial(nodes.interpret_reply, llm=llm)))
     builder.add_node(
         "extract_intent", traced_node("extract_intent")(partial(nodes.extract_intent, llm=llm))
     )
@@ -99,7 +106,7 @@ def build_graph(
 
     builder.set_entry_point("guard_input")
     builder.add_conditional_edges("guard_input", _after_guard_input, ["interpret_reply", END])
-    builder.add_conditional_edges("interpret_reply", _after_interpret_reply, ["await_payment", "extract_intent"])
+    builder.add_conditional_edges("interpret_reply", _after_interpret_reply, ["await_payment", "extract_intent", END])
     builder.add_edge("extract_intent", "check_inventory")
     builder.add_conditional_edges("check_inventory", _after_check_inventory, ["negotiate", END])
     builder.add_edge("negotiate", END)

@@ -33,6 +33,11 @@ was already asked and what's already on file.
   combine them into one item name description rather than treating "10ml" as unrelated.
 - Only leave a field null if the buyer truly never said anything that bears on it \
   anywhere in this conversation — never invent a value that wasn't said.
+- A number written as "box/pack of N" (e.g. "do you have a box of 50?", "is it sold in \
+  boxes of 50?") describes a PACKAGE SIZE the buyer is asking ABOUT, never the quantity \
+  they want to order — do not extract that N as qty. Only extract qty from a number the \
+  buyer states as how many they themselves want (e.g. "need 50", "I'll take 20 boxes", \
+  "50 units please").
 
 Already on file: item={item_name}, qty={qty}, hospital_name={hospital_name}, pin_code={pin_code}
 
@@ -44,16 +49,29 @@ Latest message: {message}"""
 
 CLARIFICATION_INSTRUCTIONS = """The buyer has asked about an item but hasn't said how many \
 units they need yet. If their latest message asks a real question about the item (specs, \
-composition, availability, etc.), answer it using ONLY the notes below — never invent a \
-spec that isn't listed, and say so plainly if the notes don't cover what they asked. Then \
-ask how many units they'd like. If their message wasn't really a question, just ask for \
-the quantity.
+composition, availability, a different pack size, etc.), answer it using ONLY the facts \
+below — never invent a spec or pack size that isn't listed. If they asked for a pack size \
+that ISN'T the one listed (e.g. asked for a box of 50 when only box of 100 exists), say \
+plainly that it isn't available and name the one that is — never agree to a pack size that \
+doesn't exist. Then ask how many units/boxes they'd like. If their message wasn't really a \
+question, just ask for the quantity.
 
 Item: {item_name}
 Available quantity: {available_qty}
+Pack size: {pack_size_fact}
 Notes/specs on file: {notes}
 
 Buyer's latest message: {message}"""
+
+
+DECLINE_INSTRUCTIONS = """The buyer just said no to sending the payment link for the offer \
+below. Acknowledge it naturally (no big deal) and ask what they'd like to change — a \
+different quantity, a different item, or anything else — using ONLY these facts, never \
+inventing a new price or promise of your own.
+
+Item currently discussed: {item_name}
+Quantity currently discussed: {qty}
+Unit price currently proposed: INR {unit_price}"""
 
 
 NEGOTIATION_INSTRUCTIONS = """Phrase a short WhatsApp reply to the buyer using ONLY these \

@@ -86,6 +86,34 @@ def test_a_non_confirming_reply_keeps_negotiating_instead_of_paying():
     assert result.get("payment_link_id") is None
 
 
+def test_a_decline_ends_the_turn_without_re_running_negotiate():
+    class DistinguishingLLM:
+        """Returns a different canned reply for the decline prompt vs. the
+        negotiation prompt, so the test can tell which one actually ran."""
+
+        def complete_structured(self, system, user, schema):
+            return ExtractedIntent(item_name="Nitrile Examination Gloves", qty=50)
+
+        def complete_text(self, system, user):
+            if "said no to sending the payment link" in user:
+                return "No worries — what would you like to change?"
+            return "We can offer 50 boxes at a fair rate. We will dispatch via our logistics partner post-payment."
+
+    graph = build_graph(inventory=make_inventory(), llm=DistinguishingLLM(), razorpay=FakeRazorpay())
+
+    negotiating = DealState(**graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"])))
+    assert negotiating.status == DealStatus.NEGOTIATING
+    assert "50 boxes at a fair rate" in negotiating.reply
+
+    negotiating.messages.append("no")
+    result = graph.invoke(negotiating)
+
+    # Regression: this used to fall through to negotiate again and repeat
+    # the identical price quote verbatim instead of reacting to "no".
+    assert result.get("payment_link_id") is None
+    assert result["reply"] == "No worries — what would you like to change?"
+
+
 def test_greeting_with_no_item_asks_for_it_instead_of_declaring_out_of_stock():
     llm = FakeLLM(structured=ExtractedIntent(), text="this should never be called")
     graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())

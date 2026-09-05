@@ -12,7 +12,13 @@ import httpx
 
 from app.agent.catalog import pack_size
 from app.agent.guardrails import check_prompt_injection, check_text_guardrails, clamp_price, compute_unit_price
-from app.agent.prompts import CLARIFICATION_INSTRUCTIONS, EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
+from app.agent.prompts import (
+    CLARIFICATION_INSTRUCTIONS,
+    DECLINE_INSTRUCTIONS,
+    EXTRACTION_INSTRUCTIONS,
+    NEGOTIATION_INSTRUCTIONS,
+    SYSTEM_PROMPT,
+)
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.observability.tracing import record_guardrail_result, traced_guardrail
 from app.services.inventory import InventoryService
@@ -30,23 +36,59 @@ _CONFIRMATION_PATTERN = re.compile(
 )
 
 
+# Deterministic decline detector — "no" to the payment-link question must
+# never be silently treated as just another non-confirming message and
+# re-quoted verbatim; it needs its own response.
+_DECLINE_PATTERN = re.compile(
+    r"\b(no|nope|nah|not\s*(now|yet|right\s*now|really)|don'?t\s*send|"
+    r"cancel|hold\s*on|wait|actually\s*no|never\s*mind)\b",
+    re.IGNORECASE,
+)
+
+
 def is_confirmation(text: str) -> bool:
     return bool(_CONFIRMATION_PATTERN.search(text))
 
 
-def interpret_reply(state: DealState) -> dict:
+def is_decline(text: str) -> bool:
+    return bool(_DECLINE_PATTERN.search(text))
+
+
+def interpret_reply(state: DealState, llm: LLMClient) -> dict:
     """Deterministic gate between a proposed price and a real payment link.
 
     Only an explicit affirmative reply while the deal is sitting at
     `NEGOTIATING` (a price has just been proposed) sets `just_confirmed`,
     which is the *only* way the graph ever reaches `await_payment` — no
-    combination of item+qty+price alone triggers it. Anything else (a
-    question, a counter-offer, a correction) routes back through
-    `extract_intent` to keep negotiating.
+    combination of item+qty+price alone triggers it.
+
+    An explicit decline ("no", "not now", ...) is handled right here too
+    — and ends the turn (`handled`) instead of falling through to
+    extract_intent/negotiate, which would just re-run the identical price
+    quote verbatim. Anything else (a question, a counter-offer, a
+    correction) falls through to keep negotiating.
     """
-    if state.status == DealStatus.NEGOTIATING and state.messages and is_confirmation(state.messages[-1]):
-        return {"just_confirmed": True}
-    return {"just_confirmed": False}
+    if state.status != DealStatus.NEGOTIATING or not state.messages:
+        return {"just_confirmed": False, "handled": False}
+
+    last_message = state.messages[-1]
+
+    if is_confirmation(last_message):
+        return {"just_confirmed": True, "handled": False}
+
+    if is_decline(last_message):
+        prompt = DECLINE_INSTRUCTIONS.format(
+            item_name=state.item_name, qty=state.qty, unit_price=state.unit_price
+        )
+        reply = llm.complete_text(SYSTEM_PROMPT, prompt)
+        with traced_guardrail("no_sla_promise") as span:
+            violations = check_text_guardrails(reply)
+            record_guardrail_result(span, passed=not violations, detail=", ".join(violations))
+            if violations:
+                reply = "No problem — what would you like to change: the item, the quantity, or something else?"
+        return {"reply": reply, "just_confirmed": False, "handled": True}
+
+    return {"just_confirmed": False, "handled": False}
 
 
 def guard_input(state: DealState) -> dict:
@@ -201,9 +243,12 @@ def _answer_and_ask_for_qty(item, state: DealState, llm: LLMClient) -> str:
     etc.) and asks for a quantity. Falls back to a plain facts readout if the
     LLM's phrasing trips a guardrail, same pattern as `negotiate`."""
     last_message = state.messages[-1] if state.messages else ""
+    pack = pack_size(item.item_name)
+    pack_size_fact = f"sold only in boxes of {pack} units" if pack else "sold individually, not boxed"
     prompt = CLARIFICATION_INSTRUCTIONS.format(
         item_name=item.item_name,
         available_qty=item.stock_qty,
+        pack_size_fact=pack_size_fact,
         notes=item.notes,
         message=last_message,
     )
