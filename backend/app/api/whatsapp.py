@@ -4,6 +4,7 @@ Conversation state is an in-memory dict keyed by sender phone number — fine
 for the buildathon scope, not durable across restarts (see README).
 """
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +13,8 @@ from fastapi.responses import PlainTextResponse
 from app.agent.graph import get_compiled_graph
 from app.agent.state import DealState
 from app.services.whatsapp import WhatsAppService, get_whatsapp_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -73,11 +76,26 @@ def receive_webhook(
     state = conversations.get(sender) or DealState()
     state.messages.append(text)
 
-    result = graph.invoke(state)
-    new_state = DealState(**result)
+    try:
+        result = graph.invoke(state)
+        new_state = DealState(**result)
+    except Exception:
+        # LLM/network hiccups (rate limits, timeouts, ...) shouldn't crash
+        # the webhook — keep the conversation resumable and let the buyer
+        # know we're still on it, rather than 500ing back to Meta.
+        logger.exception("Agent graph failed for sender %s", sender)
+        state.reply = "Sorry, we're having trouble processing that right now — we'll follow up shortly."
+        new_state = state
+
     conversations[sender] = new_state
 
     if new_state.reply:
-        whatsapp.send_message(sender, new_state.reply)
+        try:
+            whatsapp.send_message(sender, new_state.reply)
+        except Exception:
+            # Delivery failure (e.g. no real WhatsApp Cloud API creds in
+            # this environment) shouldn't crash the webhook either — the
+            # reply is still visible via GET /api/v1/deals.
+            logger.exception("Failed to deliver WhatsApp reply to %s", sender)
 
     return {"status": "ok"}

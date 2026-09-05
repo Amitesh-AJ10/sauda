@@ -117,6 +117,45 @@ def test_non_message_payload_is_ignored():
 # --- state resumption -----------------------------------------------------
 
 
+# --- resilience: neither the agent graph nor delivery can crash the webhook
+
+
+class RaisingGraph:
+    def invoke(self, state: DealState) -> dict:
+        raise RuntimeError("boom")
+
+
+class RaisingWhatsAppService:
+    def send_message(self, to: str, text: str) -> dict:
+        raise RuntimeError("delivery failed")
+
+
+def test_graph_failure_does_not_crash_webhook_and_state_stays_resumable():
+    conversations: dict = {}
+    app.dependency_overrides[get_graph] = lambda: RaisingGraph()
+    app.dependency_overrides[get_whatsapp_service] = lambda: FakeWhatsAppService()
+    app.dependency_overrides[get_conversations] = lambda: conversations
+
+    sender = "911111111111"
+    response = client.post("/webhooks/whatsapp", json=inbound_payload(sender, "Need 10 syringes"))
+
+    assert response.status_code == 200
+    assert sender in conversations
+    assert conversations[sender].messages == ["Need 10 syringes"]
+    assert conversations[sender].reply  # a graceful fallback reply was set
+
+
+def test_delivery_failure_does_not_crash_webhook():
+    fake_graph = FakeGraph(reply="Here's our best rate.")
+    app.dependency_overrides[get_graph] = lambda: fake_graph
+    app.dependency_overrides[get_whatsapp_service] = lambda: RaisingWhatsAppService()
+    app.dependency_overrides[get_conversations] = lambda: {}
+
+    response = client.post("/webhooks/whatsapp", json=inbound_payload("922222222222", "Need 10 syringes"))
+
+    assert response.status_code == 200
+
+
 def test_unknown_sender_starts_fresh_state_known_sender_resumes():
     fake_graph = FakeGraph(reply="ok")
     fake_whatsapp = FakeWhatsAppService()

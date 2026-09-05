@@ -8,7 +8,11 @@ from pydantic import BaseModel
 
 from app.observability.tracing import get_tracer
 
-DEFAULT_MODEL = "qwen/qwen3.8-27b"
+# gpt-oss is a reasoning model too, but (unlike qwen3 on Groq) accepts
+# `reasoning_effort` to keep its hidden chain-of-thought short — that's what
+# was blowing past Groq's free-tier output-token-per-minute cap on qwen3.
+DEFAULT_MODEL = "openai/gpt-oss-20b"
+MAX_OUTPUT_TOKENS = 400
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -43,6 +47,8 @@ class LLMClient:
             response = self.client.chat.completions.create(
                 model=self._model,
                 temperature=0.2,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                reasoning_effort="low",
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -65,6 +71,8 @@ class LLMClient:
             response = self.client.chat.completions.create(
                 model=self._model,
                 temperature=0,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                reasoning_effort="low",
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": system},
