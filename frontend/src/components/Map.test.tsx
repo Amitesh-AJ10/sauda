@@ -46,4 +46,29 @@ describe('Map', () => {
     const el = screen.getByTestId('payment-indicator')
     expect(el).toHaveAttribute('data-state', 'confirmed')
   })
+
+  it('does not show a dispatch sprite before a deal is dispatched', () => {
+    render(<Map deals={[makeDeal({ status: 'issuing_invoice' })]} />)
+    expect(screen.queryByTestId('dispatch-sprite')).not.toBeInTheDocument()
+  })
+
+  it('shows a dispatch sprite once a deal is dispatched', () => {
+    render(<Map deals={[makeDeal({ status: 'dispatched' })]} />)
+    expect(screen.getByTestId('dispatch-sprite')).toBeInTheDocument()
+  })
+
+  it('shows a receipt flash once a deal has an invoice url', () => {
+    render(<Map deals={[makeDeal({ status: 'issuing_invoice', invoice_url: 'https://rzp.io/invoice/fake' })]} />)
+    expect(screen.getByTestId('receipt-flash')).toBeInTheDocument()
+  })
+
+  it('does not re-trigger the dispatch trip on repeated polls of the same dispatched deal', () => {
+    const deal = makeDeal({ status: 'dispatched' })
+    const { rerender } = render(<Map deals={[deal]} />)
+    expect(screen.getAllByTestId('dispatch-sprite')).toHaveLength(1)
+
+    // Simulate the next poll returning the same still-dispatched deal.
+    rerender(<Map deals={[{ ...deal }]} />)
+    expect(screen.getAllByTestId('dispatch-sprite')).toHaveLength(1)
+  })
 })

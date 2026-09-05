@@ -27,3 +27,20 @@ Let the merchant click into a deal and see, at a glance, what the agent has done
 
 - Component tests for `DialogueBox` given each `DealState.status` value, asserting the correct human-readable text.
 - Component/animation tests for `ReceiptFlash` and `DispatchSprite` triggering only at the correct state transition (not before).
+
+## Demo-day implementation notes (2026-09-05)
+
+Time-boxed for a live demo recording — cut for speed, not because the plan changed. Written against `Map.tsx` (Task 09), already merged.
+
+**Visual scope, deliberately narrowed from the STORY.md §7 reference art:** just Hospital (left) ↔ road ↔ Godown/"Sauda HQ" (right), `LeadIndicator`/`PaymentIndicator` already there, plus the two pieces this note adds. No ambulance, forklift, crowd sprites, signage, or the dialogue/demo-controls chrome from the reference mock — those are art polish, not functional to the demo. Emoji placeholders throughout (🏥 🏭 🛵 🧾), same convention as Task 09.
+
+**"SSE-like" live feel — polling, not a real SSE endpoint.** A real `text/event-stream` backend route would be the more "correct" push mechanism, but it's new backend surface with its own failure modes to debug under a 2-hour clock. Instead: keep Task 09's `useDeals()` poll (already built, already tested), and make each state transition fire a one-shot **client-side** animation of fixed duration (driver trip ~6s, receipt flash ~1.5s) the instant it's first observed — via a `useDeliveryEvents(deals)` hook that Set-tracks which deal ids have already fired which event, so a deal sitting in a terminal `dispatched` status across many polls doesn't replay its trip. The animation itself (via Framer Motion `transition.duration`) runs smoothly in the browser regardless of poll cadence — it doesn't visibly teleport between polls. Net effect reads as live/pushed without the new backend surface. Revisit true SSE post-demo if the polling gap (default 4s) ever reads as laggy.
+
+**Trigger conditions** (derived from existing `DealState` fields, no new backend fields needed):
+- `ReceiptFlash`: fires once per deal the first poll where `invoice_url` is non-null.
+- `DispatchSprite`: fires once per deal the first poll where `status === "dispatched"`.
+- Both can fire in the same poll tick for a fast-moving deal (e.g. a script that jumps straight to dispatched) — that's fine, no ordering dependency is enforced between them for this cut.
+
+**Concurrency:** multiple simultaneously-dispatched deals render multiple driver sprites at once, vertically offset in the road lane so they don't overlap — no per-deal routing/positioning beyond that.
+
+**`DialogueBox` (click-to-open audit trail) was cut from this pass** — the highest demo value was the moving-driver effect the recording needed; the dialogue box adds a new backend summary endpoint plus a click-driven modal, and didn't fit the remaining time. Comes back as a fast-follow if there's time after end-to-end testing.
