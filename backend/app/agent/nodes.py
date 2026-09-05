@@ -11,7 +11,13 @@ import re
 import httpx
 
 from app.agent.catalog import pack_size
-from app.agent.guardrails import check_prompt_injection, check_text_guardrails, clamp_price, compute_unit_price
+from app.agent.guardrails import (
+    check_prompt_injection,
+    check_text_guardrails,
+    clamp_price,
+    compute_unit_price,
+    price_band,
+)
 from app.agent.prompts import (
     CLARIFICATION_INSTRUCTIONS,
     DECLINE_INSTRUCTIONS,
@@ -52,6 +58,20 @@ def is_confirmation(text: str) -> bool:
 
 def is_decline(text: str) -> bool:
     return bool(_DECLINE_PATTERN.search(text))
+
+
+# Deterministic payment-claim detector — "payment done"/"I already paid"
+# needs a real check against Razorpay right then (see app/api/chat.py),
+# not a generic reply and not a restart of the negotiation graph.
+_PAYMENT_CLAIM_PATTERN = re.compile(
+    r"\b(paid|payment\s*(done|made|sent|completed)|already\s*paid|just\s*paid|"
+    r"sent\s*the\s*payment|completed\s*(the\s*)?payment|money\s*sent|transferred)\b",
+    re.IGNORECASE,
+)
+
+
+def is_payment_claim(text: str) -> bool:
+    return bool(_PAYMENT_CLAIM_PATTERN.search(text))
 
 
 def interpret_reply(state: DealState, llm: LLMClient) -> dict:
@@ -288,13 +308,17 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
             span, passed=not clamped, detail=f"proposed {raw_price} -> clamped to {unit_price}"
         )
 
+    min_price, max_price = price_band(item.base_price)
     prompt = NEGOTIATION_INSTRUCTIONS.format(
         item_name=item.item_name,
         available_qty=item.stock_qty,
         qty=qty,
         unit_price=unit_price,
+        min_price=min_price,
+        max_price=max_price,
         hospital_name=state.hospital_name or "not provided yet",
         pin_code=state.pin_code or "not provided yet",
+        buyer_message=state.messages[-1] if state.messages else "",
     )
     reply = llm.complete_text(SYSTEM_PROMPT, prompt)
 

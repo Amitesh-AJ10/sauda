@@ -70,6 +70,16 @@ def test_is_decline_rejects_a_confirmation_or_unrelated_message():
         assert not nodes.is_decline(text), text
 
 
+def test_is_payment_claim_recognizes_common_phrasings():
+    for text in ["payment done", "I already paid", "just paid", "sent the payment", "money sent"]:
+        assert nodes.is_payment_claim(text), text
+
+
+def test_is_payment_claim_rejects_unrelated_messages():
+    for text in ["is the price negotiable?", "need 30 units", "no"]:
+        assert not nodes.is_payment_claim(text), text
+
+
 def test_interpret_reply_confirms_only_while_negotiating():
     state = DealState(status=DealStatus.NEGOTIATING, messages=["yes, go ahead"])
     assert nodes.interpret_reply(state, llm=FakeLLM()) == {"just_confirmed": True, "handled": False}
@@ -312,6 +322,30 @@ def test_negotiate_computes_price_python_side_and_phrases_via_llm():
     assert "boxes of 100 units" in updates["reply"]
     assert "50 boxes" in updates["reply"]
     assert "send the payment link" in updates["reply"].lower()
+
+
+def test_negotiate_passes_the_buyers_actual_message_and_price_bounds_to_the_llm():
+    # Regression: "is the price negotiable?" used to get the exact same
+    # canned quote back, because negotiate never even told the LLM what
+    # the buyer had asked.
+    inventory = make_inventory()
+    captured: dict = {}
+
+    class CapturingLLM:
+        def complete_text(self, system, user):
+            captured["prompt"] = user
+            return "56.4 is already the approved rate and can't go lower. Shall we proceed at that?"
+
+    state = DealState(
+        item_name="Nitrile Examination Gloves (Box of 100)",
+        qty=50,
+        messages=["is the price negotiable?"],
+    )
+
+    nodes.negotiate(state, inventory=inventory, llm=CapturingLLM())
+
+    assert "is the price negotiable?" in captured["prompt"]
+    assert "lowest this item could ever be priced" in captured["prompt"]
 
 
 def test_negotiate_guardrail_violation_is_caught_and_replaced():

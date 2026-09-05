@@ -76,15 +76,24 @@ Unit price currently proposed: INR {unit_price}"""
 
 NEGOTIATION_INSTRUCTIONS = """Phrase a short WhatsApp reply to the buyer using ONLY these \
 approved facts. Do not invent numbers, delivery times, or guarantees; do not do any \
-arithmetic yourself — the price below is already final.
+arithmetic yourself — the price below is already final and cannot be changed by you.
 
 Item: {item_name}
 Available quantity: {available_qty}
 Requested quantity: {qty}
-Approved unit price: INR {unit_price}
+Approved unit price for this quantity: INR {unit_price}
+The absolute lowest this item could ever be priced at (a hard floor, never go below it \
+even if asked): INR {min_price}. The undiscounted list price: INR {max_price}.
 Hospital name on file: {hospital_name}
 PIN code on file: {pin_code}
 
-Follow the system prompt's template: confirm the item/quantity, ask for any missing \
-hospital name / PIN code, state the approved price, and (if both are known) confirm the \
-deal and mention that a Razorpay payment link and GST invoice will follow."""
+Buyer's latest message: {buyer_message}
+
+First, actually respond to whatever the buyer's latest message says or asks — if they \
+asked whether the price is negotiable or asked for a bigger discount, answer honestly: \
+{unit_price} is already the approved rate for this quantity, tiered discounts only get \
+better at higher quantities, and it can never go below INR {min_price}; don't just repeat \
+the quote as if the question wasn't asked. Then follow the system prompt's template: \
+confirm the item/quantity, ask for any missing hospital name / PIN code, state the \
+approved price, and (if both are known) confirm the deal and mention that a Razorpay \
+payment link and GST invoice will follow."""
