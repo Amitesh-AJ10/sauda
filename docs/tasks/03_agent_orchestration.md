@@ -26,9 +26,9 @@ The core state machine: Extract Intent → Check Inventory → Negotiate → Awa
 
 ## Acceptance Criteria
 
-- [ ] Given a canned buyer message ("Need 500 surgical staplers to Pune, best rate?"), the graph runs end-to-end (with `await_payment`/`issue_invoice`/`dispatch` as stubs) and produces a final `DealState` with `status` progressed correctly.
-- [ ] An out-of-stock request short-circuits with an apology + available quantity, never inventing stock.
-- [ ] A guardrail test proves an LLM output containing "delivered in 10 minutes" or "we guarantee" is caught and rewritten/rejected before reaching the buyer.
+- [x] Given a canned buyer message ("Need 500 surgical staplers to Pune, best rate?"), the graph runs end-to-end (with `await_payment`/`issue_invoice`/`dispatch` as stubs) and produces a final `DealState` with `status` progressed correctly.
+- [x] An out-of-stock request short-circuits with an apology + available quantity, never inventing stock.
+- [x] A guardrail test proves an LLM output containing "delivered in 10 minutes" or "we guarantee" is caught and rewritten/rejected before reaching the buyer.
 
 ## Tests
 
