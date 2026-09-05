@@ -18,11 +18,28 @@ CONSTRAINTS AND GUARDRAILS (CRITICAL):
 5. PRICING: Do not do math. Propose a final price based ONLY on the approved variables passed to you in the system state."""
 
 
-EXTRACTION_INSTRUCTIONS = """Extract the buyer's intent from their message below. \
-Return only the item name, quantity, hospital name, and delivery PIN code they mentioned. \
-Leave any field you cannot find as null — never guess or invent a value.
+EXTRACTION_INSTRUCTIONS = """Extract the buyer's item name, quantity, hospital name, and \
+delivery PIN code, using the whole conversation below for context — a short reply like \
+"need 10" or "the 10ml one" or "yes" has no meaning on its own; resolve it against what \
+was already asked and what's already on file.
 
-Buyer message: {message}"""
+- Write down the item name exactly as the buyer described it, even if it's only a \
+  product family with no specific variant (e.g. "syringe" or "disposable syringe" with \
+  no size) — that is still a real, useful item name. Extracting *something* the buyer \
+  said is always better than leaving it null; a separate step, not you, decides whether \
+  it's specific enough to price.
+- A later message can replace an earlier, vaguer item name with a more specific one \
+  (e.g. "10ml" after "disposable syringe" narrows it to "disposable syringe 10ml") — \
+  combine them into one item name description rather than treating "10ml" as unrelated.
+- Only leave a field null if the buyer truly never said anything that bears on it \
+  anywhere in this conversation — never invent a value that wasn't said.
+
+Already on file: item={item_name}, qty={qty}, hospital_name={hospital_name}, pin_code={pin_code}
+
+Full conversation so far:
+{conversation}
+
+Latest message: {message}"""
 
 
 NEGOTIATION_INSTRUCTIONS = """Phrase a short WhatsApp reply to the buyer using ONLY these \

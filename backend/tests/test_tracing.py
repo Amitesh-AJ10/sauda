@@ -48,7 +48,9 @@ def test_graph_run_produces_one_span_per_node_correctly_nested():
     )
     graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
 
-    graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"]))
+    negotiating = DealState(**graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"])))
+    negotiating.messages.append("Yes, go ahead")
+    graph.invoke(negotiating)
 
     spans = exporter.get_finished_spans()
     node_spans = {span.name for span in spans}

@@ -47,6 +47,36 @@ def test_guard_input_no_messages_returns_no_updates():
     assert nodes.guard_input(DealState()) == {}
 
 
+# --- interpret_reply / is_confirmation ------------------------------------
+
+
+def test_is_confirmation_recognizes_common_affirmatives():
+    for text in ["yes", "Yeah go ahead", "sure, send it", "sounds good", "ok proceed", "please send it"]:
+        assert nodes.is_confirmation(text), text
+
+
+def test_is_confirmation_rejects_a_question_or_counter_offer():
+    for text in ["can you do a better price?", "what about 10ml?", "how much for 200?"]:
+        assert not nodes.is_confirmation(text), text
+
+
+def test_interpret_reply_confirms_only_while_negotiating():
+    state = DealState(status=DealStatus.NEGOTIATING, messages=["yes, go ahead"])
+    assert nodes.interpret_reply(state) == {"just_confirmed": True}
+
+
+def test_interpret_reply_does_not_confirm_a_non_affirmative_reply():
+    state = DealState(status=DealStatus.NEGOTIATING, messages=["can you do a better price?"])
+    assert nodes.interpret_reply(state) == {"just_confirmed": False}
+
+
+def test_interpret_reply_ignores_an_affirmative_word_outside_negotiating():
+    # "yes" from a buyer who hasn't been quoted a price yet must not
+    # accidentally short-circuit straight to await_payment.
+    state = DealState(status=DealStatus.EXTRACTING_INTENT, messages=["yes"])
+    assert nodes.interpret_reply(state) == {"just_confirmed": False}
+
+
 # --- extract_intent -----------------------------------------------------
 
 
@@ -167,6 +197,18 @@ def test_check_inventory_zero_qty_is_treated_the_same_as_missing():
     assert updates["status"] == DealStatus.EXTRACTING_INTENT
 
 
+def test_check_inventory_asks_to_disambiguate_a_vague_item_name():
+    # "Disposable Syringe" matches both the 5ml and 10ml SKU — never guess.
+    inventory = make_inventory()
+    state = DealState(item_name="Disposable Syringe", qty=10)
+
+    updates = nodes.check_inventory(state, inventory=inventory)
+
+    assert updates["status"] == DealStatus.EXTRACTING_INTENT
+    assert "5ml" in updates["reply"]
+    assert "10ml" in updates["reply"]
+
+
 # --- negotiate --------------------------------------------------------
 
 
@@ -183,6 +225,11 @@ def test_negotiate_computes_price_python_side_and_phrases_via_llm():
     assert updates["status"] == DealStatus.NEGOTIATING
     assert updates["guardrail_violations"] == []
     assert updates["qty"] == 50
+    # Deterministic packaging clarity + the confirmation ask are always
+    # appended in Python, regardless of how the LLM phrased its part.
+    assert "boxes of 100 units" in updates["reply"]
+    assert "50 boxes" in updates["reply"]
+    assert "send the payment link" in updates["reply"].lower()
 
 
 def test_negotiate_guardrail_violation_is_caught_and_replaced():

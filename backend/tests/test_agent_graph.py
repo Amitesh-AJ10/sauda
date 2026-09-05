@@ -29,7 +29,7 @@ def make_inventory() -> InventoryService:
     return InventoryService()
 
 
-def test_happy_path_runs_end_to_end_to_awaiting_payment():
+def test_happy_path_stops_at_negotiating_and_asks_before_sending_a_link():
     llm = FakeLLM(
         structured=ExtractedIntent(
             item_name="Nitrile Examination Gloves",
@@ -43,12 +43,47 @@ def test_happy_path_runs_end_to_end_to_awaiting_payment():
 
     result = graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"]))
 
-    # The graph stops here: it created a payment link, but isn't paid yet.
-    # issue_invoice/dispatch only run once the Razorpay webhook confirms payment.
-    assert result["status"] == DealStatus.AWAITING_PAYMENT
-    assert result["payment_link_id"] == "plink_fake123"
+    # Item + qty + price alone are never enough — negotiate stops and asks,
+    # it never reaches await_payment on its own.
+    assert result["status"] == DealStatus.NEGOTIATING
+    assert result.get("payment_link_id") is None
     assert result["unit_price"] is not None
     assert result["available_qty"] >= 50
+    assert "send the payment link" in result["reply"].lower()
+
+
+def test_explicit_confirmation_is_the_only_way_to_reach_await_payment():
+    llm = FakeLLM(
+        structured=ExtractedIntent(item_name="Nitrile Examination Gloves", qty=50),
+        text="We can offer 50 boxes at a fair rate. We will dispatch via our logistics partner post-payment.",
+    )
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
+
+    negotiating = DealState(**graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"])))
+    assert negotiating.status == DealStatus.NEGOTIATING
+
+    negotiating.messages.append("Yes, go ahead and send it")
+    confirmed = graph.invoke(negotiating)
+
+    assert confirmed["status"] == DealStatus.AWAITING_PAYMENT
+    assert confirmed["payment_link_id"] == "plink_fake123"
+
+
+def test_a_non_confirming_reply_keeps_negotiating_instead_of_paying():
+    llm = FakeLLM(
+        structured=ExtractedIntent(item_name="Nitrile Examination Gloves", qty=50),
+        text="We can offer 50 boxes at a fair rate. We will dispatch via our logistics partner post-payment.",
+    )
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
+
+    negotiating = DealState(**graph.invoke(DealState(messages=["Need 50 nitrile gloves, best rate?"])))
+    assert negotiating.status == DealStatus.NEGOTIATING
+
+    negotiating.messages.append("Can you do a better price?")
+    result = graph.invoke(negotiating)
+
+    assert result["status"] == DealStatus.NEGOTIATING
+    assert result.get("payment_link_id") is None
 
 
 def test_greeting_with_no_item_asks_for_it_instead_of_declaring_out_of_stock():
@@ -110,5 +145,6 @@ def test_guardrail_violation_caught_before_reaching_buyer():
     assert "guarantee" not in result["reply"].lower()
     assert "delivered in 10 minutes" not in result["reply"].lower()
     assert len(result["guardrail_violations"]) > 0
-    # guardrail catch doesn't block the rest of the pipeline
-    assert result["status"] == DealStatus.AWAITING_PAYMENT
+    # guardrail catch doesn't block the rest of the pipeline — it still
+    # proposes a (rewritten) price and stops to ask for confirmation.
+    assert result["status"] == DealStatus.NEGOTIATING

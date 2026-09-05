@@ -49,3 +49,39 @@ def test_has_stock_zero_stock_item():
     assert item is not None
     assert item.stock_qty == 0
     assert service.has_stock(item.item_name, 1) is False
+
+
+# --- resolve --------------------------------------------------------------
+
+
+def test_resolve_exact_match_bypasses_ambiguity():
+    service = make_service()
+    item, ambiguous = service.resolve("Disposable Syringe 5ml (Box of 100)")
+    assert item is not None
+    assert item.product_id == "SUR-007"
+    assert ambiguous == []
+
+
+def test_resolve_ambiguous_substring_asks_instead_of_guessing():
+    service = make_service()
+    item, ambiguous = service.resolve("disposable syringe")
+    assert item is None
+    assert sorted(ambiguous) == [
+        "Disposable Syringe 10ml (Box of 100)",
+        "Disposable Syringe 5ml (Box of 100)",
+    ]
+
+
+def test_resolve_unique_substring_is_unambiguous():
+    service = make_service()
+    item, ambiguous = service.resolve("pulse oximeter")
+    assert item is not None
+    assert item.item_name == "Pulse Oximeter"
+    assert ambiguous == []
+
+
+def test_resolve_unknown_item_returns_none_with_no_candidates():
+    service = make_service()
+    item, ambiguous = service.resolve("flux capacitor")
+    assert item is None
+    assert ambiguous == []

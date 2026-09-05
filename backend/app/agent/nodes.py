@@ -6,8 +6,11 @@ unit-tested directly and later wrapped in tracing (Task 07) without a
 rewrite.
 """
 
+import re
+
 import httpx
 
+from app.agent.catalog import pack_size
 from app.agent.guardrails import check_prompt_injection, check_text_guardrails, clamp_price, compute_unit_price
 from app.agent.prompts import EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
 from app.agent.state import DealState, DealStatus, ExtractedIntent
@@ -15,6 +18,35 @@ from app.observability.tracing import record_guardrail_result, traced_guardrail
 from app.services.inventory import InventoryService
 from app.services.llm import LLMClient
 from app.services.razorpay_client import RazorpayClient
+
+# Deterministic confirmation detector — only an explicit affirmative reply
+# while a price is on the table is ever allowed to trigger a real Razorpay
+# payment link. See `interpret_reply` below.
+_CONFIRMATION_PATTERN = re.compile(
+    r"\b(yes|yeah|yep|yup|sure|ok|okay|confirm(ed)?|go\s*ahead|sounds?\s*good|"
+    r"please\s*send|send\s*it|that\s*works|proceed|book\s*it|place\s*the\s*order|"
+    r"do\s*it|alright|good\s*to\s*go|let'?s\s*do\s*it)\b",
+    re.IGNORECASE,
+)
+
+
+def is_confirmation(text: str) -> bool:
+    return bool(_CONFIRMATION_PATTERN.search(text))
+
+
+def interpret_reply(state: DealState) -> dict:
+    """Deterministic gate between a proposed price and a real payment link.
+
+    Only an explicit affirmative reply while the deal is sitting at
+    `NEGOTIATING` (a price has just been proposed) sets `just_confirmed`,
+    which is the *only* way the graph ever reaches `await_payment` — no
+    combination of item+qty+price alone triggers it. Anything else (a
+    question, a counter-offer, a correction) routes back through
+    `extract_intent` to keep negotiating.
+    """
+    if state.status == DealStatus.NEGOTIATING and state.messages and is_confirmation(state.messages[-1]):
+        return {"just_confirmed": True}
+    return {"just_confirmed": False}
 
 
 def guard_input(state: DealState) -> dict:
@@ -49,14 +81,28 @@ def extract_intent(state: DealState, llm: LLMClient) -> dict:
 
     Only ever fills in fields the buyer actually mentioned; existing state
     values are kept if this message doesn't repeat them.
+
+    Passes the *whole* conversation plus what's already on file, not just
+    the latest message in isolation — a reply like "need 10" or "the 10ml
+    one" has no item/qty of its own; it only means anything against the
+    context of what was already asked. Extracting the last message alone
+    silently lost these every time.
     """
     if not state.messages:
         return {}
 
     last_message = state.messages[-1]
+    conversation = "\n".join(f"- {message}" for message in state.messages)
     extracted = llm.complete_structured(
         SYSTEM_PROMPT,
-        EXTRACTION_INSTRUCTIONS.format(message=last_message),
+        EXTRACTION_INSTRUCTIONS.format(
+            message=last_message,
+            conversation=conversation,
+            item_name=state.item_name or "not yet known",
+            qty=state.qty or "not yet known",
+            hospital_name=state.hospital_name or "not yet known",
+            pin_code=state.pin_code or "not yet known",
+        ),
         ExtractedIntent,
     )
 
@@ -90,6 +136,10 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
     used to silently treat a missing qty as "the buyer's asking about the
     full stock," which could create a real ₹0 Razorpay payment link for
     "0 x <item>" once `state.qty` (0/None) reached `await_payment`.
+
+    And a genuinely ambiguous item name (e.g. "disposable syringe", which
+    matches both the 5ml and 10ml SKU) must ask which one rather than
+    silently quoting whichever the lookup happened to match first.
     """
     if not state.item_name:
         return {
@@ -105,7 +155,15 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
         }
 
     requested_qty = state.qty
-    item = inventory.find(state.item_name)
+    item, ambiguous_names = inventory.resolve(state.item_name)
+
+    if item is None and ambiguous_names:
+        options = " or ".join(ambiguous_names)
+        return {
+            "status": DealStatus.EXTRACTING_INTENT,
+            "reply": f"We carry a few options for '{state.item_name}': {options}. Which one would you like?",
+        }
+
     available_qty = item.stock_qty if item else 0
 
     if item is None:
@@ -135,8 +193,14 @@ def check_inventory(state: DealState, inventory: InventoryService) -> dict:
 
 
 def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> dict:
-    """Python computes the approved price; the LLM only phrases the message."""
-    item = inventory.find(state.item_name) if state.item_name else None
+    """Python computes the approved price; the LLM only phrases the message.
+
+    Never routes to `await_payment` on its own — see `interpret_reply`.
+    This node's job ends at proposing a price and asking whether to send
+    the payment link; only an explicit "yes" on the *next* turn can create
+    one.
+    """
+    item, _ = inventory.resolve(state.item_name) if state.item_name else (None, [])
     if item is None:
         return {"status": DealStatus.DECLINED, "reply": "Sorry, that item is no longer available."}
 
@@ -169,6 +233,9 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
         if violations:
             reply = _safe_negotiation_reply(item.item_name, qty, unit_price, state)
 
+    reply = f"{reply} {_packaging_note(item.item_name, qty)}".strip()
+    reply = f"{reply} Shall I go ahead and send the payment link?"
+
     return {
         "qty": qty,
         "unit_price": unit_price,
@@ -176,6 +243,17 @@ def negotiate(state: DealState, inventory: InventoryService, llm: LLMClient) -> 
         "reply": reply,
         "guardrail_violations": [*state.guardrail_violations, *violations],
     }
+
+
+def _packaging_note(item_name: str, qty: int) -> str:
+    """Deterministic packaging clarity for a '(Box of N)' item — Python states
+    what a bare quantity actually means, rather than leaving it for the
+    buyer to assume units when the catalog sells boxes (or vice versa)."""
+    pack = pack_size(item_name)
+    if not pack:
+        return ""
+    box_word = "box" if qty == 1 else "boxes"
+    return f"Note: this ships in boxes of {pack} units, so {qty} = {qty} {box_word} ({qty * pack} units total)."
 
 
 def _safe_negotiation_reply(item_name: str, qty: int, unit_price: float, state: DealState) -> str:

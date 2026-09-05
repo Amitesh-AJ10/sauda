@@ -1,16 +1,28 @@
 """Wires the node functions into a LangGraph `StateGraph`.
 
-Linear flow: guard_input -> extract_intent -> check_inventory -> negotiate ->
-await_payment -> END, with short-circuits to END whenever guard_input lands
-on Declined, or check_inventory lands on Out of stock *or* still has no
-item name at all (still gathering info — asked for the product and
-stopped, rather than negotiating a price for nothing), or negotiate lands
-on Declined.
+Flow: guard_input -> interpret_reply -> [extract_intent -> check_inventory ->
+negotiate] -> END, with `interpret_reply` able to skip straight to
+`await_payment` instead of re-running extraction.
 
 `guard_input` runs first and never touches the LLM: a jailbreak/prompt-
 injection attempt in the buyer's own message is caught by Python before
 extract_intent ever sees it, so a compromised prompt can't talk its way
-into a payment link.
+into a payment link. Declined here ends the turn immediately.
+
+`interpret_reply` is the *only* path to `await_payment`: an explicit
+affirmative reply while the deal is `NEGOTIATING` (a price was just
+proposed) is the one and only thing that creates a real Razorpay payment
+link. Item + quantity + price alone are never enough — negotiate always
+stops and asks "shall I send the payment link?" instead of proceeding on
+its own, however complete the order looks.
+
+Anything else re-enters extract_intent -> check_inventory -> negotiate, so
+a clarifying answer ("10ml"), a correction ("actually make it 20"), or a
+fresh lead all keep negotiating rather than being force-fit into a
+confirmation. check_inventory short-circuits straight to END whenever it
+still needs more from the buyer (no item, no quantity, an ambiguous item
+name) or the item's out of stock, instead of reaching negotiate with
+nothing real to price.
 
 `await_payment` is a deliberate stopping point: it only creates the payment
 link, it doesn't (and can't) know the deal is paid yet. `issue_invoice` and
@@ -33,20 +45,21 @@ from app.services.razorpay_client import RazorpayClient, get_razorpay_client
 
 
 def _after_guard_input(state: DealState) -> str:
-    return END if state.status == DealStatus.DECLINED else "extract_intent"
+    return END if state.status == DealStatus.DECLINED else "interpret_reply"
+
+
+def _after_interpret_reply(state: DealState) -> str:
+    return "await_payment" if state.just_confirmed else "extract_intent"
 
 
 def _after_check_inventory(state: DealState) -> str:
     # OUT_OF_STOCK: a real, known item with insufficient stock.
-    # EXTRACTING_INTENT: the buyer hasn't named an item yet at all — asked
-    # for it and stopped, rather than negotiating a price for `None`.
+    # EXTRACTING_INTENT: still missing something (item, qty, or which
+    # variant of an ambiguous item) — asked for it and stopped, rather
+    # than negotiating a price for nothing.
     if state.status in (DealStatus.OUT_OF_STOCK, DealStatus.EXTRACTING_INTENT):
         return END
     return "negotiate"
-
-
-def _after_negotiate(state: DealState) -> str:
-    return "await_payment" if state.status != DealStatus.DECLINED else END
 
 
 def build_graph(
@@ -67,6 +80,7 @@ def build_graph(
     builder = StateGraph(DealState)
 
     builder.add_node("guard_input", traced_node("guard_input")(nodes.guard_input))
+    builder.add_node("interpret_reply", traced_node("interpret_reply")(nodes.interpret_reply))
     builder.add_node(
         "extract_intent", traced_node("extract_intent")(partial(nodes.extract_intent, llm=llm))
     )
@@ -84,12 +98,11 @@ def build_graph(
     )
 
     builder.set_entry_point("guard_input")
-    builder.add_conditional_edges("guard_input", _after_guard_input, ["extract_intent", END])
+    builder.add_conditional_edges("guard_input", _after_guard_input, ["interpret_reply", END])
+    builder.add_conditional_edges("interpret_reply", _after_interpret_reply, ["await_payment", "extract_intent"])
     builder.add_edge("extract_intent", "check_inventory")
-    builder.add_conditional_edges(
-        "check_inventory", _after_check_inventory, ["negotiate", END]
-    )
-    builder.add_conditional_edges("negotiate", _after_negotiate, ["await_payment", END])
+    builder.add_conditional_edges("check_inventory", _after_check_inventory, ["negotiate", END])
+    builder.add_edge("negotiate", END)
     builder.add_edge("await_payment", END)
 
     return builder.compile()
