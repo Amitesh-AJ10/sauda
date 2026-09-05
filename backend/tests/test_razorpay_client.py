@@ -102,6 +102,27 @@ def test_create_invoice_sends_correct_line_items_and_amount(monkeypatch):
     assert invoice.status == "issued"
 
 
+# --- get_payment_link_status -------------------------------------------------
+
+
+def test_get_payment_link_status_returns_the_real_status(monkeypatch):
+    captured = {}
+
+    def fake_get(url, auth, timeout):
+        captured["url"] = url
+        captured["auth"] = auth
+        return FakeResponse({"id": "plink_ABC123", "status": "paid"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    client = RazorpayClient(key_id="rzp_test_key", key_secret="rzp_test_secret")
+    status = client.get_payment_link_status("plink_ABC123")
+
+    assert captured["url"] == "https://api.razorpay.com/v1/payment_links/plink_ABC123"
+    assert captured["auth"] == ("rzp_test_key", "rzp_test_secret")
+    assert status == "paid"
+
+
 # --- verify_webhook_signature -----------------------------------------------
 # HMAC-SHA256 test vectors per Razorpay's documented webhook-signature scheme.
 

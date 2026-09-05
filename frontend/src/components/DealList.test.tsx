@@ -15,6 +15,7 @@ function makeDeal(id: string): Deal {
     messages: [],
     reply: null,
     guardrail_violations: [],
+    audit_trail: [],
   }
 }
 
@@ -27,5 +28,21 @@ describe('DealList', () => {
   it('renders one card per deal', () => {
     render(<DealList deals={[makeDeal('a'), makeDeal('b')]} selectedId={null} onSelect={() => {}} />)
     expect(screen.getAllByTestId('deal-card')).toHaveLength(2)
+  })
+
+  it('marks unseen deals with an alert and known hospitals with an open-chat link', () => {
+    render(
+      <DealList
+        deals={[makeDeal('a'), makeDeal('b')]}
+        selectedId={null}
+        onSelect={() => {}}
+        unseenIds={new Set(['a'])}
+        hospitalIds={new Set(['a'])}
+      />,
+    )
+    const alerts = screen.getAllByTestId('deal-card-alert')
+    const links = screen.getAllByTestId('open-hospital-chat')
+    expect(alerts).toHaveLength(1)
+    expect(links).toHaveLength(1)
   })
 })

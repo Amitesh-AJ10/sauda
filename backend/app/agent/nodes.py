@@ -8,13 +8,40 @@ rewrite.
 
 import httpx
 
-from app.agent.guardrails import check_text_guardrails, clamp_price, compute_unit_price
+from app.agent.guardrails import check_prompt_injection, check_text_guardrails, clamp_price, compute_unit_price
 from app.agent.prompts import EXTRACTION_INSTRUCTIONS, NEGOTIATION_INSTRUCTIONS, SYSTEM_PROMPT
 from app.agent.state import DealState, DealStatus, ExtractedIntent
 from app.observability.tracing import record_guardrail_result, traced_guardrail
 from app.services.inventory import InventoryService
 from app.services.llm import LLMClient
 from app.services.razorpay_client import RazorpayClient
+
+
+def guard_input(state: DealState) -> dict:
+    """Deterministic pre-LLM check: block prompt-injection/jailbreak attempts
+    before they ever reach the LLM, inventory, or pricing logic.
+
+    Unlike `negotiate`'s guardrail (which catches the LLM's own unsafe
+    phrasing and rewrites it, letting the deal continue), a hit here means
+    the *buyer* tried to override Sauda's role — the whole graph stops
+    here, Declined, with zero LLM calls made.
+    """
+    if not state.messages:
+        return {}
+
+    with traced_guardrail("no_prompt_injection") as span:
+        violations = check_prompt_injection(state.messages[-1])
+        record_guardrail_result(span, passed=not violations, detail=", ".join(violations))
+
+    if not violations:
+        return {}
+
+    return {
+        "status": DealStatus.DECLINED,
+        "reply": "I can only help with product quotes and orders for this account "
+        "— I can't change my instructions or role.",
+        "guardrail_violations": [*state.guardrail_violations, *violations],
+    }
 
 
 def extract_intent(state: DealState, llm: LLMClient) -> dict:

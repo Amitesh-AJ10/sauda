@@ -48,11 +48,13 @@ def finalize_payment(
     razorpay: RazorpayClient,
     whatsapp: WhatsAppService,
 ) -> DealState:
-    """Paid -> invoice issued -> dispatched, and (for a WhatsApp deal) notify the buyer.
+    """Paid -> invoice issued -> dispatched, and (for a WhatsApp/chat deal) notify the buyer.
 
-    Shared by the real `payment_link.paid` webhook above and by the demo
-    "Trigger Razorpay Webhook" control (`app/api/demo.py`) — same effect,
-    the demo control just skips signature verification and payload lookup.
+    Shared by the real `payment_link.paid` webhook above and by
+    `app/api/deals.py`'s poll-based reconciliation loop (which checks
+    Razorpay's real payment-link status directly, for local dev where
+    Razorpay has no public webhook URL to call) — same effect either way,
+    the only difference is how payment was confirmed.
     """
     if state.status == DealStatus.DISPATCHED:
         return state  # already processed — idempotent no-op on replay

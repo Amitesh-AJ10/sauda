@@ -20,4 +20,9 @@ describe('StatusStepper', () => {
     expect(screen.queryByTestId('stepper-step-negotiating')).not.toBeInTheDocument()
     expect(screen.getByText('Out of stock')).toBeInTheDocument()
   })
+
+  it('shows a waiting message when there is no lead yet', () => {
+    render(<StatusStepper status={null} />)
+    expect(screen.getByTestId('status-stepper')).toHaveTextContent('Waiting for the first message')
+  })
 })

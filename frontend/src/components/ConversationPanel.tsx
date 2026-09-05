@@ -1,12 +1,13 @@
 import type { Deal } from '../types/deal'
 import { StatusStepper } from './StatusStepper'
 import { GuardrailBanner } from './GuardrailBanner'
+import { AuditTrail } from './AuditTrail'
 
 interface ConversationPanelProps {
   deal: Deal | null
 }
 
-/** Detail view for the selected deal: pipeline progress, message log, payment/invoice links. */
+/** Detail view for the selected deal: pipeline progress, audit trail, message log, payment/invoice links. */
 export function ConversationPanel({ deal }: ConversationPanelProps) {
   if (!deal) {
     return (
@@ -14,7 +15,7 @@ export function ConversationPanel({ deal }: ConversationPanelProps) {
         data-testid="conversation-panel-empty"
         className="flex h-full min-h-64 items-center justify-center rounded-[20px] border border-black bg-white p-8 text-center text-black/50"
       >
-        Select a deal to see the conversation and its progress.
+        Select a hospital to see the conversation and its progress.
       </div>
     )
   }
@@ -32,6 +33,8 @@ export function ConversationPanel({ deal }: ConversationPanelProps) {
       </div>
 
       <GuardrailBanner violations={deal.guardrail_violations} />
+
+      <AuditTrail entries={deal.audit_trail} />
 
       <div className="rounded-[20px] border border-black bg-white p-4">
         <p className="font-bold">Conversation</p>

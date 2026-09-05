@@ -2,11 +2,19 @@ import type { DealStatus } from '../types/deal'
 import { PIPELINE_STATUSES, STATUS_LABEL, isErrorStatus } from '../lib/status'
 
 interface StatusStepperProps {
-  status: DealStatus
+  status: DealStatus | null
 }
 
 /** Horizontal step tracker for the happy-path pipeline; collapses to a single flagged step on error. */
 export function StatusStepper({ status }: StatusStepperProps) {
+  if (status === null) {
+    return (
+      <p data-testid="status-stepper" className="text-sm text-black/50">
+        Waiting for the first message…
+      </p>
+    )
+  }
+
   if (isErrorStatus(status)) {
     return (
       <div data-testid="status-stepper" className="flex items-center gap-2 text-sm font-bold text-black">

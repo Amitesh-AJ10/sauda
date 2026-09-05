@@ -14,6 +14,7 @@ const DEAL: Deal = {
   messages: ['Need 500 nitrile gloves to Pune, best rate?'],
   reply: 'We can do ₹12,500 for 500 units. Here is your payment link.',
   guardrail_violations: [],
+  audit_trail: ['🔍 Checked inventory for \'Nitrile Gloves\'', '✅ Stock confirmed: 500 units available'],
 }
 
 describe('ConversationPanel', () => {
@@ -39,5 +40,16 @@ describe('ConversationPanel', () => {
   it('shows the guardrail banner when the deal has violations', () => {
     render(<ConversationPanel deal={{ ...DEAL, guardrail_violations: ['Blocked SLA promise'] }} />)
     expect(screen.getByTestId('guardrail-banner')).toBeInTheDocument()
+  })
+
+  it('renders the audit trail entries', () => {
+    render(<ConversationPanel deal={DEAL} />)
+    expect(screen.getByTestId('audit-trail')).toBeInTheDocument()
+    expect(screen.getByText(/Stock confirmed: 500 units available/)).toBeInTheDocument()
+  })
+
+  it('omits the audit trail card when there are no entries', () => {
+    render(<ConversationPanel deal={{ ...DEAL, audit_trail: [] }} />)
+    expect(screen.queryByTestId('audit-trail')).not.toBeInTheDocument()
   })
 })

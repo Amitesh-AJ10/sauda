@@ -1,8 +1,14 @@
 """Wires the node functions into a LangGraph `StateGraph`.
 
-Linear flow: extract_intent -> check_inventory -> negotiate -> await_payment
--> END, with short-circuits to END whenever check_inventory or negotiate
-lands on a terminal status (out of stock / declined) instead of progressing.
+Linear flow: guard_input -> extract_intent -> check_inventory -> negotiate ->
+await_payment -> END, with short-circuits to END whenever guard_input,
+check_inventory, or negotiate lands on a terminal status (declined / out of
+stock) instead of progressing.
+
+`guard_input` runs first and never touches the LLM: a jailbreak/prompt-
+injection attempt in the buyer's own message is caught by Python before
+extract_intent ever sees it, so a compromised prompt can't talk its way
+into a payment link.
 
 `await_payment` is a deliberate stopping point: it only creates the payment
 link, it doesn't (and can't) know the deal is paid yet. `issue_invoice` and
@@ -22,6 +28,10 @@ from app.observability.tracing import traced_node
 from app.services.inventory import InventoryService, get_inventory_service
 from app.services.llm import LLMClient
 from app.services.razorpay_client import RazorpayClient, get_razorpay_client
+
+
+def _after_guard_input(state: DealState) -> str:
+    return END if state.status == DealStatus.DECLINED else "extract_intent"
 
 
 def _after_check_inventory(state: DealState) -> str:
@@ -49,6 +59,7 @@ def build_graph(
 
     builder = StateGraph(DealState)
 
+    builder.add_node("guard_input", traced_node("guard_input")(nodes.guard_input))
     builder.add_node(
         "extract_intent", traced_node("extract_intent")(partial(nodes.extract_intent, llm=llm))
     )
@@ -65,7 +76,8 @@ def build_graph(
         traced_node("await_payment")(partial(nodes.await_payment, razorpay=razorpay)),
     )
 
-    builder.set_entry_point("extract_intent")
+    builder.set_entry_point("guard_input")
+    builder.add_conditional_edges("guard_input", _after_guard_input, ["extract_intent", END])
     builder.add_edge("extract_intent", "check_inventory")
     builder.add_conditional_edges(
         "check_inventory", _after_check_inventory, ["negotiate", END]

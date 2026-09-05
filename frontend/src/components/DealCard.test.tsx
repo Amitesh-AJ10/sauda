@@ -14,6 +14,7 @@ const BASE_DEAL: Deal = {
   messages: ['Need 500 nitrile gloves to Pune, best rate?'],
   reply: null,
   guardrail_violations: [],
+  audit_trail: [],
 }
 
 describe('DealCard', () => {
@@ -39,9 +40,25 @@ describe('DealCard', () => {
   it('calls onSelect when clicked and reflects selected state', () => {
     const onSelect = vi.fn()
     render(<DealCard deal={BASE_DEAL} selected={true} onSelect={onSelect} />)
-    const card = screen.getByTestId('deal-card')
-    expect(card).toHaveAttribute('aria-pressed', 'true')
-    card.click()
+    const button = screen.getByRole('button')
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+    button.click()
     expect(onSelect).toHaveBeenCalledOnce()
+  })
+
+  it('shows a pulsing alert dot only when hasAlert is true', () => {
+    const { rerender } = render(<DealCard deal={BASE_DEAL} selected={false} onSelect={() => {}} hasAlert={false} />)
+    expect(screen.queryByTestId('deal-card-alert')).not.toBeInTheDocument()
+
+    rerender(<DealCard deal={BASE_DEAL} selected={false} onSelect={() => {}} hasAlert={true} />)
+    expect(screen.getByTestId('deal-card-alert')).toBeInTheDocument()
+  })
+
+  it('shows the open-chat link only when canOpenChat is true', () => {
+    const { rerender } = render(<DealCard deal={BASE_DEAL} selected={false} onSelect={() => {}} canOpenChat={false} />)
+    expect(screen.queryByTestId('open-hospital-chat')).not.toBeInTheDocument()
+
+    rerender(<DealCard deal={BASE_DEAL} selected={false} onSelect={() => {}} canOpenChat={true} />)
+    expect(screen.getByTestId('open-hospital-chat')).toHaveAttribute('href', '/hospital/deal-1')
   })
 })

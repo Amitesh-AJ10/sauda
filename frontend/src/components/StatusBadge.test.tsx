@@ -19,4 +19,9 @@ describe('StatusBadge', () => {
     render(<StatusBadge status="negotiating" />)
     expect(screen.getByTestId('status-badge')).not.toHaveTextContent('⚠')
   })
+
+  it('shows a neutral placeholder when there is no lead yet', () => {
+    render(<StatusBadge status={null} />)
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('No messages yet')
+  })
 })
