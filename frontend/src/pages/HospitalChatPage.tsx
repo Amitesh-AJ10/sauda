@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react'
 import { sendChatMessage } from '../api'
 import { ChatBubble } from '../components/ChatBubble'
 import { ChatComposer } from '../components/ChatComposer'
-import { StatusBadge } from '../components/StatusBadge'
 import { HospitalAvatar } from '../components/HospitalAvatar'
+import { STATUS_LABEL } from '../lib/status'
+import { doodleBackgroundImage, whatsapp } from '../lib/whatsappTheme'
 import { useDeals } from '../hooks/useDeals'
 
 interface Turn {
   from: 'hospital' | 'sauda'
   text: string
+  time: string
   paymentLinkUrl?: string | null
   invoiceUrl?: string | null
 }
@@ -19,7 +21,12 @@ interface HospitalChatPageProps {
   onLogout: () => void
 }
 
-/** What one hospital sees after signing in: only their own thread with Sauda, nothing else. */
+function nowTime(): string {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/** What one hospital sees after signing in: only their own thread with Sauda, styled
+ * as a desktop WhatsApp window (warm cream canvas, flat colors, no shadows). */
 export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: HospitalChatPageProps) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [seeded, setSeeded] = useState(false)
@@ -34,23 +41,29 @@ export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: Hospita
   // turn-by-turn history, since that's all DealState keeps server-side.
   useEffect(() => {
     if (seeded || !deal || deal.messages.length === 0) return
-    const initial: Turn[] = deal.messages.map((text) => ({ from: 'hospital', text }))
+    const initial: Turn[] = deal.messages.map((text) => ({ from: 'hospital', text, time: nowTime() }))
     if (deal.reply) {
-      initial.push({ from: 'sauda', text: deal.reply, paymentLinkUrl: deal.payment_link_url, invoiceUrl: deal.invoice_url })
+      initial.push({
+        from: 'sauda',
+        text: deal.reply,
+        time: nowTime(),
+        paymentLinkUrl: deal.payment_link_url,
+        invoiceUrl: deal.invoice_url,
+      })
     }
     setTurns(initial)
     setSeeded(true)
   }, [seeded, deal])
 
   async function handleSend(text: string) {
-    setTurns((prev) => [...prev, { from: 'hospital', text }])
+    setTurns((prev) => [...prev, { from: 'hospital', text, time: nowTime() }])
     try {
       const result = await sendChatMessage(hospitalId, text)
       const reply = result.reply
       if (reply) {
         setTurns((prev) => [
           ...prev,
-          { from: 'sauda', text: reply, paymentLinkUrl: result.payment_link_url, invoiceUrl: result.invoice_url },
+          { from: 'sauda', text: reply, time: nowTime(), paymentLinkUrl: result.payment_link_url, invoiceUrl: result.invoice_url },
         ])
       }
     } catch (err) {
@@ -59,43 +72,66 @@ export function HospitalChatPage({ hospitalId, hospitalName, onLogout }: Hospita
   }
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-md flex-col border-x border-black bg-white">
-      <div className="flex items-center justify-between gap-2 border-b border-black px-4 py-3">
+    <div className="mx-auto flex min-h-svh max-w-md flex-col">
+      <div
+        className="flex items-center justify-between gap-2 border-b px-4 py-3"
+        style={{ backgroundColor: whatsapp.paperWhite, borderColor: whatsapp.paleBlueWash }}
+      >
         <div className="flex items-center gap-3">
-          <HospitalAvatar id={hospitalId} />
-          <p className="font-bold">{hospitalName}</p>
+          <HospitalAvatar id={hospitalId} size={40} />
+          <div>
+            <p className="text-base font-bold" style={{ color: whatsapp.inkBlack }}>
+              {hospitalName}
+            </p>
+            {deal?.status && (
+              <p className="text-xs" style={{ color: whatsapp.warmGray }}>
+                {STATUS_LABEL[deal.status]}
+              </p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <StatusBadge status={deal?.status ?? null} />
-          <button
-            type="button"
-            data-testid="logout-button"
-            onClick={onLogout}
-            className="rounded-full border border-black px-3 py-1 text-xs font-bold"
-          >
-            Sign out
-          </button>
-        </div>
+        <button
+          type="button"
+          data-testid="logout-button"
+          onClick={onLogout}
+          className="text-xs font-bold underline"
+          style={{ color: whatsapp.inkBlack }}
+        >
+          Sign out
+        </button>
       </div>
+
       <div
         data-testid="chat-thread"
-        className="flex-1 space-y-3 overflow-y-auto p-4"
-        style={{ backgroundColor: 'var(--color-sky-wash)' }}
+        className="flex-1 space-y-2 overflow-y-auto p-4"
+        style={{
+          backgroundColor: whatsapp.creamCanvas,
+          backgroundImage: doodleBackgroundImage,
+          backgroundSize: '140px 140px',
+        }}
       >
         {turns.length === 0 && (
-          <p className="text-center text-sm text-black/50">Say hello — ask about a product, quantity, or price.</p>
+          <p className="text-center text-sm" style={{ color: whatsapp.warmGray }}>
+            Say hello — ask about a product, quantity, or price.
+          </p>
         )}
         {turns.map((turn, index) => (
           <ChatBubble
             key={index}
             from={turn.from}
             text={turn.text}
+            time={turn.time}
             paymentLinkUrl={turn.paymentLinkUrl}
             invoiceUrl={turn.invoiceUrl}
           />
         ))}
       </div>
-      {error && <p className="px-4 py-2 text-sm font-bold text-red-700">{error}</p>}
+
+      {error && (
+        <p className="px-4 py-2 text-sm font-bold text-red-700" style={{ backgroundColor: whatsapp.paperWhite }}>
+          {error}
+        </p>
+      )}
       <ChatComposer onSend={handleSend} />
     </div>
   )
