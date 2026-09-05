@@ -5,8 +5,12 @@ import { ConversationPanel } from '../components/ConversationPanel'
 import { useDeals } from '../hooks/useDeals'
 import { fetchHospitals } from '../api'
 
+interface AdminDashboardProps {
+  onLogout: () => void
+}
+
 /** The merchant's view: every hospital tile, click one to see its live chat + audit trail. */
-export function AdminDashboard() {
+export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const deals = useDeals()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [hospitalIds, setHospitalIds] = useState<Set<string>>(new Set())
@@ -55,7 +59,7 @@ export function AdminDashboard() {
 
   return (
     <div className="min-h-svh">
-      <Header />
+      <Header onLogout={onLogout} />
       <main className="mx-auto grid max-w-6xl gap-6 p-6 lg:grid-cols-[minmax(0,320px)_1fr]">
         <aside className="flex flex-col gap-4">
           <DealList

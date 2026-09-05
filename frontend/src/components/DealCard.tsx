@@ -1,5 +1,6 @@
 import type { Deal } from '../types/deal'
 import { StatusBadge } from './StatusBadge'
+import { HospitalAvatar } from './HospitalAvatar'
 
 interface DealCardProps {
   deal: Deal
@@ -31,11 +32,14 @@ export function DealCard({ deal, selected, onSelect, hasAlert = false, canOpenCh
       )}
       <button type="button" onClick={onSelect} aria-pressed={selected} className="w-full text-left">
         <div className="flex items-start justify-between gap-2 pr-4">
-          <div className="min-w-0">
-            <p className="truncate font-bold">{deal.hospital_name ?? 'Unknown hospital'}</p>
-            <p className="truncate text-sm text-black/70">
-              {deal.qty ?? '?'} × {deal.item_name ?? 'item pending'}
-            </p>
+          <div className="flex min-w-0 items-center gap-3">
+            <HospitalAvatar id={deal.id} />
+            <div className="min-w-0">
+              <p className="truncate font-bold">{deal.hospital_name ?? 'Unknown hospital'}</p>
+              <p className="truncate text-sm text-black/70">
+                {deal.qty ?? '?'} × {deal.item_name ?? 'item pending'}
+              </p>
+            </div>
           </div>
           <StatusBadge status={deal.status} />
         </div>

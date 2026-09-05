@@ -19,6 +19,14 @@ def test_declined_by_guardrail_stops_before_inventory():
     assert not any("Checked inventory" in line for line in trail)
 
 
+def test_greeting_with_no_item_yet_shows_only_the_message_received_line():
+    state = DealState(messages=["hello"], status=DealStatus.EXTRACTING_INTENT)
+
+    trail = build_audit_trail(state)
+
+    assert trail == ['📩 Message received: "hello"']
+
+
 def test_out_of_stock_shows_the_check_and_the_shortfall():
     state = DealState(
         messages=["need 500 staplers"],

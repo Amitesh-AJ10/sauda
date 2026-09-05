@@ -73,9 +73,22 @@ def extract_intent(state: DealState, llm: LLMClient) -> dict:
 
 
 def check_inventory(state: DealState, inventory: InventoryService) -> dict:
-    """Deterministic stock lookup. Never lets the LLM near this decision."""
+    """Deterministic stock lookup. Never lets the LLM near this decision.
+
+    A message that hasn't named a product yet (a bare "hi", or a question
+    with no item in it) is a *missing-info* case, not an out-of-stock one —
+    conflating the two used to show the merchant a scary "Out of stock"
+    badge and reply "Sorry, we don't currently stock 'None'" for a plain
+    greeting. This asks for the item instead of guessing or declining.
+    """
+    if not state.item_name:
+        return {
+            "status": DealStatus.EXTRACTING_INTENT,
+            "reply": "Hi! What product are you looking for, and how many units do you need?",
+        }
+
     requested_qty = state.qty or 0
-    item = inventory.find(state.item_name) if state.item_name else None
+    item = inventory.find(state.item_name)
     available_qty = item.stock_qty if item else 0
 
     if item is None:

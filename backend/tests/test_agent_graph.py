@@ -51,6 +51,17 @@ def test_happy_path_runs_end_to_end_to_awaiting_payment():
     assert result["available_qty"] >= 50
 
 
+def test_greeting_with_no_item_asks_for_it_instead_of_declaring_out_of_stock():
+    llm = FakeLLM(structured=ExtractedIntent(), text="this should never be called")
+    graph = build_graph(inventory=make_inventory(), llm=llm, razorpay=FakeRazorpay())
+
+    result = graph.invoke(DealState(messages=["hello"]))
+
+    assert result["status"] == DealStatus.EXTRACTING_INTENT
+    assert "None" not in result["reply"]
+    assert result.get("payment_link_id") is None
+
+
 def test_out_of_stock_short_circuits_with_apology_never_inventing_stock():
     llm = FakeLLM(
         structured=ExtractedIntent(item_name="Skin Stapler", qty=500),

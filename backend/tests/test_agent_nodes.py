@@ -121,6 +121,17 @@ def test_check_inventory_unknown_item_never_invents_stock():
     assert updates["available_qty"] == 0
 
 
+def test_check_inventory_asks_for_the_item_when_none_was_mentioned():
+    inventory = make_inventory()
+    state = DealState(item_name=None, qty=None)
+
+    updates = nodes.check_inventory(state, inventory=inventory)
+
+    assert updates["status"] == DealStatus.EXTRACTING_INTENT
+    assert "what product" in updates["reply"].lower()
+    assert "None" not in updates["reply"]
+
+
 # --- negotiate --------------------------------------------------------
 
 

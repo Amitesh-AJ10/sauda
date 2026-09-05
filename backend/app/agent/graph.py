@@ -1,9 +1,11 @@
 """Wires the node functions into a LangGraph `StateGraph`.
 
 Linear flow: guard_input -> extract_intent -> check_inventory -> negotiate ->
-await_payment -> END, with short-circuits to END whenever guard_input,
-check_inventory, or negotiate lands on a terminal status (declined / out of
-stock) instead of progressing.
+await_payment -> END, with short-circuits to END whenever guard_input lands
+on Declined, or check_inventory lands on Out of stock *or* still has no
+item name at all (still gathering info — asked for the product and
+stopped, rather than negotiating a price for nothing), or negotiate lands
+on Declined.
 
 `guard_input` runs first and never touches the LLM: a jailbreak/prompt-
 injection attempt in the buyer's own message is caught by Python before
@@ -35,7 +37,12 @@ def _after_guard_input(state: DealState) -> str:
 
 
 def _after_check_inventory(state: DealState) -> str:
-    return "negotiate" if state.status != DealStatus.OUT_OF_STOCK else END
+    # OUT_OF_STOCK: a real, known item with insufficient stock.
+    # EXTRACTING_INTENT: the buyer hasn't named an item yet at all — asked
+    # for it and stopped, rather than negotiating a price for `None`.
+    if state.status in (DealStatus.OUT_OF_STOCK, DealStatus.EXTRACTING_INTENT):
+        return END
+    return "negotiate"
 
 
 def _after_negotiate(state: DealState) -> str:
